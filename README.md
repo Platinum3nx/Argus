@@ -2,10 +2,10 @@
 
 ## Neuro-Symbolic AI Security Auditor
 
-**Mathematically Verified Code Repair Powered by Gemini 2.0 + Lean 4**
+**Mathematically Verified Code Repair Powered by Gemini 3 + Lean 4**
 
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Ready-success)](https://github.com/Platinum3nx/Argus)
-[![Gemini 2.0](https://img.shields.io/badge/Gemini-2.0%20Flash-blue)](https://ai.google.dev/)
+[![Gemini 3](https://img.shields.io/badge/Gemini-3.0%20Pro-blue)](https://ai.google.dev/)
 [![Lean 4](https://img.shields.io/badge/Lean-4.26.0-purple)](https://leanprover.github.io/)
 
 Argus is a **zero-config GitHub Action** that combines the creativity of **Gemini** with the rigor of **Lean 4 formal proofs** to automatically find AND fix security vulnerabilities in Python code.
@@ -33,7 +33,7 @@ Argus is a **zero-config GitHub Action** that combines the creativity of **Gemin
 flowchart TD
     Start([Python Code]) --> Scan{Secrets Scan}
     Scan -- Found Secrets --> Report([Report Issue])
-    Scan -- Safe --> Trans[AI Translator<br/>Gemini 2.0]
+    Scan -- Safe --> Trans[AI Translator<br/>Gemini 3]
     
     Trans --> Lean[Lean 4 Verifier]
     
@@ -262,7 +262,7 @@ Test with files in `demo_files/`:
 
 - **Python 3.11** — Backend and AST parsing
 - **Lean 4.26.0** + **Mathlib** — Formal verification
-- **Gemini 2.0 Flash** — AI translation and repair
+- **Gemini 3 Pro** — AI translation and repair
 - **Next.js 14** — Frontend dashboard
 - **Docker** — Containerized GitHub Action
 - **SARIF 2.1.0** — Security report format
