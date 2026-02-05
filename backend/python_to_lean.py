@@ -44,12 +44,14 @@ class PythonToLeanTranslator(ast.NodeVisitor):
         """Convert a Python function to Lean."""
         func_name = node.name
         
-        # Get parameters (assume all are Int for simplicity)
+        # Get parameters with type hint detection
         params = []
         for arg in node.args.args:
-            params.append(f"({arg.arg} : Int)")
+            lean_type = self._infer_param_type(arg)
+            params.append(f"({arg.arg} : {lean_type})")
         
         params_str = " ".join(params)
+
         
         # Get function body
         body = self._translate_body(node.body)
@@ -58,6 +60,49 @@ class PythonToLeanTranslator(ast.NodeVisitor):
         return_type = self._infer_return_type(node.body)
         
         return f"def {func_name} {params_str} : {return_type} :=\n{body}"
+    
+    def _infer_param_type(self, arg: ast.arg) -> str:
+        """
+        Infer Lean type from Python parameter type annotations.
+        
+        Supports:
+        - list, List, List[int] -> List Int
+        - float -> Float
+        - str -> String
+        - bool -> Bool
+        - int (or no annotation) -> Int
+        """
+        if arg.annotation is None:
+            return "Int"  # Default to Int if no type hint
+        
+        annotation = arg.annotation
+        
+        # Handle simple Name annotations (list, float, str, bool, int)
+        if isinstance(annotation, ast.Name):
+            type_map = {
+                "list": "List Int",
+                "List": "List Int",
+                "float": "Float",
+                "str": "String",
+                "bool": "Bool",
+                "int": "Int",
+            }
+            return type_map.get(annotation.id, "Int")
+        
+        # Handle subscripted types like List[int], List[str]
+        if isinstance(annotation, ast.Subscript):
+            if isinstance(annotation.value, ast.Name):
+                container = annotation.value.id
+                if container in ("list", "List"):
+                    # Get the element type
+                    if isinstance(annotation.slice, ast.Name):
+                        elem_type = annotation.slice.id
+                        elem_map = {"int": "Int", "float": "Float", "str": "String", "bool": "Bool"}
+                        lean_elem = elem_map.get(elem_type, "Int")
+                        return f"List {lean_elem}"
+                    return "List Int"
+        
+        return "Int"  # Fallback
     
     def _infer_return_type(self, body: list) -> str:
         """Infer the return type from the function body."""
@@ -359,27 +404,30 @@ import Mathlib.Tactic.Linarith
     if lean_functions.startswith("-- PARSE_ERROR"):
         return lean_functions
     
-    # Step 2: Identify the main function to verify
-    # Look for common financial function names
-    main_func = "withdraw"  # default
-    first_param = "balance"  # default
+    # Step 2: Dynamically extract function names from generated Lean code
+    # This replaces the hardcoded list of function names
+    import re
     
-    for func_name in ["withdraw", "transfer", "deposit", "debit"]:
-        if f"def {func_name}" in lean_functions:
-            main_func = func_name
-            break
+    # Find all function definitions: "def func_name (params"
+    func_matches = re.findall(r'def\s+(\w+)\s+\(', lean_functions)
+    
+    if not func_matches:
+        # No functions found, return with a placeholder theorem
+        return f"{imports}{lean_functions}\n\n-- No functions found to verify"
+    
+    # Use the first function found as the main function to verify
+    main_func = func_matches[0]
     
     # Extract first parameter name from function signature
-    import re
-    match = re.search(rf"def {main_func}\s+\((\w+)\s*:", lean_functions)
-    if match:
-        first_param = match.group(1)
+    param_match = re.search(rf"def {main_func}\s+\((\w+)\s*:", lean_functions)
+    first_param = param_match.group(1) if param_match else "x"
     
     # Step 3: Generate theorem
     theorem = generate_theorem(main_func, first_param)
     
     # Step 4: Combine with imports
     return f"{imports}{lean_functions}\n\n{theorem}"
+
 
 
 # Quick test

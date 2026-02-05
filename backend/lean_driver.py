@@ -1,15 +1,19 @@
+"""
+Lean 4 Verification Driver
+
+This module handles running Lean 4 proofs for formal verification.
+It creates temporary Lean files and runs them through the Lean compiler.
+
+For CI (Docker): Uses the pre-configured Lean environment with Mathlib.
+For Local Dev: Creates a standalone Lean file (no external dependencies needed for basic proofs).
+"""
+
 import subprocess
 import os
 import uuid
-import json
+import tempfile
 import re
-from typing import Dict, Any, List
-
-# Define the root of the Lean project
-# Assuming this file is in <root>/backend/lean_driver.py
-# and veritas_proofs is in <root>/veritas_proofs
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERITAS_PROJECT_PATH = os.path.join(BASE_DIR, "veritas_proofs")
+from typing import Dict, Any
 
 
 def _contains_sorry(lean_code: str) -> bool:
@@ -17,12 +21,8 @@ def _contains_sorry(lean_code: str) -> bool:
     Check if the Lean code contains 'sorry' - an incomplete proof marker.
     
     In Lean 4, 'sorry' is a tactic that allows a proof to compile without
-    actually proving anything. It's essentially a "cheat code" that should
+    actually proving anything. It's a "cheat code" that should
     NEVER appear in verified production code.
-    
-    We check for:
-    - 'sorry' as a standalone tactic
-    - Ignoring 'sorry' in comments or strings
     
     Args:
         lean_code: The Lean 4 source code
@@ -40,41 +40,86 @@ def _contains_sorry(lean_code: str) -> bool:
     code_no_strings = re.sub(r'"[^"]*"', '', code_no_comments)
     
     # Check for 'sorry' as a word (not part of another word)
-    # This matches 'sorry' as a tactic
     if re.search(r'\bsorry\b', code_no_strings):
         return True
     
     return False
 
 
+def _get_lean_project_path() -> str:
+    """
+    Get the path to the Lean project directory.
+    
+    In Docker (CI): Uses /app/lean_project (pre-configured with Mathlib)
+    Locally: Uses a temp directory
+    """
+    # Check if we're in Docker (CI environment)
+    docker_lean_path = "/app/lean_project"
+    if os.path.exists(docker_lean_path) and os.path.isdir(docker_lean_path):
+        return docker_lean_path
+    
+    # Check for local Lean project in repo root
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_lean_path = os.path.join(base_dir, "lean_project")
+    if os.path.exists(local_lean_path) and os.path.isdir(local_lean_path):
+        return local_lean_path
+    
+    # Fallback: use temp directory (basic proofs only, no Mathlib)
+    return tempfile.gettempdir()
+
+
 def run_verification(lean_code: str) -> Dict[str, Any]:
     """
-    Writes the code to a temporary .lean file inside the veritas_proofs project.
-    Runs lean <file> via subprocess using `lake env`.
-    Captures stdout and stderr.
-    Returns a JSON object: {verified: bool, error_message: str, distinct_errors: list}.
+    Run Lean 4 verification on the provided code.
+    
+    Writes the code to a temporary .lean file, runs the Lean compiler,
+    and returns the verification result.
+    
+    Args:
+        lean_code: Complete Lean 4 source code to verify
+        
+    Returns:
+        Dict with keys:
+        - verified: bool - True if code compiles AND contains no 'sorry'
+        - error_message: str - Full compiler output
+        - distinct_errors: list - Parsed error messages
+        - has_sorry: bool - Whether code contains 'sorry'
+        - compiled: bool - Whether code compiled successfully
     """
+    
+    # Get the Lean project path
+    lean_project_path = _get_lean_project_path()
+    is_temp_dir = lean_project_path == tempfile.gettempdir()
     
     # Generate a unique filename
     file_id = str(uuid.uuid4())
     filename = f"verify_{file_id}.lean"
-    file_path = os.path.join(VERITAS_PROJECT_PATH, filename)
+    file_path = os.path.join(lean_project_path, filename)
 
     try:
         # 1. Write the code to a temporary .lean file
         with open(file_path, "w") as f:
             f.write(lean_code)
 
-        # 2. Run lean <file> via subprocess
-        # We use `lake env lean <file>` to ensure Mathlib and other dependencies are in the path
-        # subprocess.run requires the cwd to be the project root for `lake` to resolve configuration correctly
-        cmd = ["lake", "env", "lean", filename]
+        # 2. Run Lean compiler
+        if is_temp_dir:
+            # Standalone mode: run lean directly (no lake, no Mathlib)
+            # This works for basic proofs that don't need Mathlib tactics
+            cmd = ["lean", file_path]
+            cwd = None
+        else:
+            # Project mode: use lake env to get Mathlib in scope
+            cmd = ["lake", "env", "lean", filename]
+            cwd = lean_project_path
+        
+        print(f"[Lean Driver] Running: {' '.join(cmd)}")
         
         process = subprocess.run(
             cmd,
-            cwd=VERITAS_PROJECT_PATH,
+            cwd=cwd,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=60  # 60 second timeout
         )
 
         stdout = process.stdout
@@ -82,11 +127,9 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
         return_code = process.returncode
 
         # 3. Process results
-        # Initial check: did it compile?
         compiled = (return_code == 0)
         
-        # CRITICAL: Check for 'sorry' - this is a "cheat code" that skips proofs
-        # A file with 'sorry' is NOT truly verified, even if it compiles!
+        # CRITICAL: Check for 'sorry' - this skips proofs
         has_sorry = _contains_sorry(lean_code)
         
         if has_sorry:
@@ -95,9 +138,6 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
         # Only SECURE if: compiles AND no sorry
         verified = compiled and not has_sorry
         
-        # Combine stdout and stderr for the full error message if needed, 
-        # but usually errors are in stderr or stdout depending on Lean version/configuration.
-        # Lean 4 usually puts errors in stderr or stdout.
         full_output = (stdout + "\n" + stderr).strip()
         
         # Add sorry warning to error message if applicable
@@ -108,14 +148,12 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
         if not verified:
             if has_sorry:
                 distinct_errors.append("Proof contains 'sorry' - incomplete proof detected")
-            # Basic parsing to extract distinct errors (one per line or block)
-            # This is a simple heuristic; can be improved.
-            # Filtering out empty lines and "info:" lines if desired, keeping it simple for now.
-            error_lines = [line for line in full_output.splitlines() if line.strip() and "error:" in line]
+            # Parse error lines
+            error_lines = [line for line in full_output.splitlines() if line.strip() and "error:" in line.lower()]
             distinct_errors.extend(error_lines)
             if not distinct_errors:
-                 # Fallback if no explicit "error:" found but failed
-                 distinct_errors = [line for line in full_output.splitlines() if line.strip()]
+                # Fallback if no explicit "error:" found but failed
+                distinct_errors = [line for line in full_output.splitlines() if line.strip()][:5]
 
         return {
             "verified": verified,
@@ -125,11 +163,29 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
             "compiled": compiled
         }
 
+    except subprocess.TimeoutExpired:
+        return {
+            "verified": False,
+            "error_message": "Lean verification timed out after 60 seconds",
+            "distinct_errors": ["Timeout: verification took too long"],
+            "has_sorry": False,
+            "compiled": False
+        }
+    except FileNotFoundError:
+        return {
+            "verified": False,
+            "error_message": "Lean compiler not found. Install Lean 4 or run in Docker.",
+            "distinct_errors": ["Lean not installed"],
+            "has_sorry": False,
+            "compiled": False
+        }
     except Exception as e:
         return {
             "verified": False,
             "error_message": str(e),
-            "distinct_errors": [str(e)]
+            "distinct_errors": [str(e)],
+            "has_sorry": False,
+            "compiled": False
         }
     finally:
         # Cleanup: remove the temporary file
