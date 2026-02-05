@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 ENV ELAN_HOME="/usr/local/elan"
 ENV PATH="${ELAN_HOME}/bin:${PATH}"
 
-# 3. Install elan and the specific Lean 4 version
-RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.26.0
+# 3. Install elan and the specific Lean 4 version (must match lean-toolchain)
+RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.14.0
 
 # 4. Set working directory
 WORKDIR /app
@@ -33,7 +33,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 9. Cache-bust: Change this version to force Docker to re-copy backend code
-ARG BUILD_VERSION=2026-02-05-v9-imports
+ARG BUILD_VERSION=2026-02-05-v10-lean414
 RUN echo "Build version: ${BUILD_VERSION}"
 
 # 10. Copy backend code (this will now always be fresh due to cache-bust above)
