@@ -13,12 +13,119 @@ Integrates the Neuro-Symbolic Repair Loop:
 import os
 import sys
 import json
+import re
+from datetime import datetime, timezone
 from backend import repo_manager
 from backend import agents
 from backend.ai_repair import generate_fix
 from backend.github_service import GitHubService
 from backend.secrets_scanner import scan_repo, format_findings_for_report
 from backend.sarif_generator import generate_sarif
+
+
+def extract_counterexample(lean_output: str) -> dict:
+    """
+    Extract counterexample values from Lean proof comments.
+    
+    Looks for patterns like:
+    -- Counterexample: current_balance = 900, charge_amount = 200, credit_limit = 1000
+    """
+    counterexample = {}
+    
+    # Match lines like: -- Counterexample: var1 = val1, var2 = val2
+    pattern = r'--\s*Counterexample[:\s]+(.+)'
+    match = re.search(pattern, lean_output, re.IGNORECASE)
+    
+    if match:
+        pairs_str = match.group(1)
+        # Parse individual var = value pairs
+        pair_pattern = r'(\w+)\s*=\s*([^\s,]+)'
+        for var_match in re.finditer(pair_pattern, pairs_str):
+            var_name = var_match.group(1)
+            var_value = var_match.group(2)
+            # Try to convert to int/float
+            try:
+                counterexample[var_name] = int(var_value)
+            except ValueError:
+                try:
+                    counterexample[var_name] = float(var_value)
+                except ValueError:
+                    counterexample[var_name] = var_value
+    
+    return counterexample
+
+
+def extract_error_explanation(lean_output: str) -> str:
+    """
+    Extract the human-readable error explanation from Lean comments.
+    
+    Looks for lines starting with '--' that explain the error.
+    """
+    explanations = []
+    
+    for line in lean_output.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('--'):
+            # Skip counterexample lines (handled separately)
+            if 'counterexample' not in stripped.lower():
+                explanation = stripped[2:].strip()
+                if explanation and len(explanation) > 10:
+                    explanations.append(explanation)
+    
+    return ' '.join(explanations) if explanations else "Formal verification failed"
+
+
+def generate_json_report(results: list, secrets_findings: list, repo_name: str = None) -> dict:
+    """
+    Generate a rich JSON report for the frontend dashboard.
+    
+    This is MORE detailed than SARIF and designed for our custom UI.
+    """
+    summary = {
+        "secure": sum(1 for r in results if r["status"] == "SECURE"),
+        "vulnerable": sum(1 for r in results if r["status"] == "VULNERABLE"),
+        "patched": sum(1 for r in results if r["status"] == "AUTO_PATCHED"),
+        "secrets": len(secrets_findings) if secrets_findings else 0
+    }
+    
+    files = []
+    for r in results:
+        lean_proof = r.get("proof", "")
+        
+        file_entry = {
+            "filename": r["filename"],
+            "status": r["status"],
+            "original_code": r.get("original_code", ""),
+            "lean_proof": lean_proof,
+            "error_explanation": extract_error_explanation(lean_proof) if r["status"] == "VULNERABLE" else None,
+            "counterexample": extract_counterexample(lean_proof) if r["status"] == "VULNERABLE" else None,
+            "suggested_fix": r.get("suggested_fix") or r.get("fixed_code"),
+            "fix_verified": r["status"] == "AUTO_PATCHED"
+        }
+        files.append(file_entry)
+    
+    # Add secrets as file entries too
+    if secrets_findings:
+        for secret in secrets_findings:
+            files.append({
+                "filename": secret.file_path,
+                "status": "SECRET_DETECTED",
+                "secret_type": secret.secret_type,
+                "line_number": secret.line_number,
+                "severity": secret.severity,
+                "description": secret.description
+            })
+    
+    report = {
+        "tool": "Argus",
+        "version": "1.0.0",
+        "repo": repo_name or os.getenv("GITHUB_REPOSITORY", "unknown"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "summary": summary,
+        "files": files
+    }
+    
+    return report
 
 
 def attempt_repair(filename: str, original_code: str, lean_error: str, repo_path: str) -> dict:
@@ -140,6 +247,24 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
         report_lines.append(f"### {icon} {r['filename']}")
         report_lines.append(f"**Status:** {r['status']}")
         
+        # NEW: Show "Why is this Vulnerable?" for failed files
+        if r["status"] == "VULNERABLE":
+            proof = r.get("proof", "")
+            explanation = extract_error_explanation(proof)
+            counterexample = extract_counterexample(proof)
+            
+            report_lines.append("\n#### ⚠️ Why is this Vulnerable?")
+            report_lines.append(f"> {explanation}")
+            
+            # Show counterexample as a table if available
+            if counterexample:
+                report_lines.append("\n**Counterexample Found:**")
+                report_lines.append("| Variable | Value |")
+                report_lines.append("|----------|-------|")
+                for var, val in counterexample.items():
+                    report_lines.append(f"| `{var}` | {val} |")
+                report_lines.append("")
+        
         # Show repair attempt info
         if r.get("repair_attempt"):
             repair = r["repair_attempt"]
@@ -175,6 +300,7 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
             report_lines.append("```\n</details>\n")
              
         report_lines.append("---")
+
 
     report_content = "\n".join(report_lines)
     
@@ -303,6 +429,7 @@ def main():
                 
             # Initial audit
             result = agents.audit_file(filename, content)
+            result["original_code"] = content  # Store for JSON report
             
             # If VULNERABLE, attempt repair
             if result["status"] == "VULNERABLE":
@@ -368,6 +495,17 @@ def main():
         print(f"SARIF report written to: {sarif_file}")
     except Exception as e:
         print(f"Error generating SARIF report: {e}")
+    
+    # 3c. Generate rich JSON report for dashboard
+    print("Generating JSON report for dashboard...")
+    try:
+        json_report = generate_json_report(results, secrets_findings)
+        json_file = os.path.join(repo_path, "argus_report.json")
+        with open(json_file, "w") as f:
+            json.dump(json_report, f, indent=2)
+        print(f"JSON report written to: {json_file}")
+    except Exception as e:
+        print(f"Error generating JSON report: {e}")
     
     # 4. Create PR if there are fixes
     if all_fixed_content:

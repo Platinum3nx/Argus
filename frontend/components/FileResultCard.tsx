@@ -1,29 +1,31 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronUp, FileCode } from "lucide-react";
-import CodeEditor from "./CodeEditor"; // Assuming this is in the same folder or adjust import
+import { ChevronDown, ChevronUp, FileCode, Lightbulb, Loader2 } from "lucide-react";
+import CodeEditor from "./CodeEditor";
+import ProofViewer from "./ProofViewer";
 
 interface FileResult {
     filename: string;
     status: string;
-    verified: boolean; // Initial verification status
-    fix_verified: boolean; // Final verification status (of the fix)
+    verified: boolean;
+    fix_verified: boolean;
     original_code: string;
     fixed_code: string;
     logs: string[];
+    // New fields from enhanced report
+    error_explanation?: string;
+    counterexample?: Record<string, number | string>;
+    lean_proof?: string;
 }
 
 export default function FileResultCard({ result }: { result: FileResult }) {
     const [expanded, setExpanded] = useState(false);
+    const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+    const [isExplaining, setIsExplaining] = useState(false);
 
     // Derived Status Logic
-    // 1. SECURE: Originally verified.
     const isSecure = result.verified;
-
-    // 2. PATCHED: Not originally verified, but the fixed code IS verified.
     const isPatched = !result.verified && result.fix_verified && result.fixed_code && result.fixed_code !== result.original_code;
-
-    // 3. VULNERABLE: Not verified initially, and fix not verified (or failed).
     const isVulnerable = !isSecure && !isPatched;
 
     const getStatusBadge = () => {
@@ -46,6 +48,28 @@ export default function FileResultCard({ result }: { result: FileResult }) {
                 VULNERABLE
             </span>
         );
+    };
+
+    const askGemini = async () => {
+        setIsExplaining(true);
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+            const response = await fetch(`${baseUrl}/explain`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    lean_error: result.lean_proof || result.logs?.join("\n") || "",
+                    python_code: result.original_code,
+                    filename: result.filename
+                })
+            });
+            const data = await response.json();
+            setAiExplanation(data.explanation);
+        } catch (error) {
+            setAiExplanation("Failed to get explanation. Please try again.");
+        } finally {
+            setIsExplaining(false);
+        }
     };
 
     return (
@@ -73,22 +97,85 @@ export default function FileResultCard({ result }: { result: FileResult }) {
                         exit={{ height: 0, opacity: 0 }}
                         className="border-t border-gray-800"
                     >
+                        {/* Vulnerability Explanation Section (NEW) */}
+                        {isVulnerable && (
+                            <div className="p-4 bg-red-950/30 border-b border-red-900/50">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-sm font-bold text-red-400 flex items-center gap-2">
+                                        <span>⚠️</span> WHY IS THIS VULNERABLE?
+                                    </h4>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); askGemini(); }}
+                                        disabled={isExplaining}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/80 hover:bg-purple-500 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
+                                    >
+                                        {isExplaining ? (
+                                            <><Loader2 className="w-3 h-3 animate-spin" /> Thinking...</>
+                                        ) : (
+                                            <><Lightbulb className="w-3 h-3" /> Ask Gemini</>
+                                        )}
+                                    </button>
+                                </div>
+
+                                {/* Static Explanation from Report */}
+                                {result.error_explanation && (
+                                    <p className="text-sm text-gray-300 mb-3">{result.error_explanation}</p>
+                                )}
+
+                                {/* Counterexample Table */}
+                                {result.counterexample && Object.keys(result.counterexample).length > 0 && (
+                                    <div className="mt-3">
+                                        <p className="text-xs text-gray-400 mb-2 font-bold">COUNTEREXAMPLE:</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {Object.entries(result.counterexample).map(([key, value]) => (
+                                                <div key={key} className="bg-black/50 rounded p-2 text-center">
+                                                    <div className="text-xs text-gray-500">{key}</div>
+                                                    <div className="text-lg font-bold text-white">{String(value)}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* AI-Generated Explanation */}
+                                {aiExplanation && (
+                                    <div className="mt-4 p-3 bg-purple-900/30 border border-purple-800/50 rounded-lg">
+                                        <p className="text-xs text-purple-300 font-bold mb-2">🤖 GEMINI EXPLANATION:</p>
+                                        <p className="text-sm text-gray-200 whitespace-pre-wrap">{aiExplanation}</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Code Comparison */}
                         <div className="grid grid-cols-2 gap-4 p-4 h-96">
                             <CodeEditor
                                 label="ORIGINAL [PYTHON]"
                                 value={result.original_code}
                                 readOnly={true}
                             />
-                            {/* If Secure, we might not have a fix, so show original or say "No changes needed" */}
                             <CodeEditor
                                 label={isSecure ? "VERIFIED CODE" : isPatched ? "VERIFIED FIX" : "FAILED FIX ATTEMPT"}
                                 value={isSecure ? result.original_code : result.fixed_code}
                                 readOnly={true}
                             />
                         </div>
+
+                        {/* Lean Proof Viewer */}
+                        {result.lean_proof && (
+                            <div className="px-4 pb-4">
+                                <ProofViewer
+                                    leanCode={result.lean_proof}
+                                    title="Formal Verification Proof"
+                                    defaultExpanded={false}
+                                />
+                            </div>
+                        )}
+
+                        {/* Audit Logs */}
                         <div className="p-4 bg-black/50 border-t border-gray-800 text-xs text-gray-400 font-mono">
                             <p className="mb-2 font-bold text-gray-300">AUDIT LOGS:</p>
-                            {result.logs.slice(-5).map((log: string, i: number) => (
+                            {result.logs?.slice(-5).map((log: string, i: number) => (
                                 <div key={i}>&gt; {log}</div>
                             ))}
                         </div>

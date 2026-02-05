@@ -158,3 +158,61 @@ async def audit_repo(request: RepoRequest):
                 shutil.rmtree(repo_path)
 
     return StreamingResponse(repo_generator(), media_type="application/x-ndjson")
+
+
+class ExplainRequest(BaseModel):
+    lean_error: str
+    python_code: str = ""
+    filename: str = ""
+
+
+EXPLAIN_PROMPT = """You are a senior software engineer explaining a bug to a developer.
+
+A formal verification tool (Lean 4) found a bug in this Python code. Your job is to explain:
+1. What the bug is (in plain English)
+2. Why it's dangerous
+3. How to fix it
+
+Be concise and practical. Use bullet points. Don't mention "Lean" or "theorem" - just explain the bug.
+
+## Python Code
+{python_code}
+
+## Verification Error
+{lean_error}
+
+## Your Explanation
+"""
+
+
+@app.post("/explain")
+async def explain_vulnerability(request: ExplainRequest):
+    """
+    Use Gemini to explain a Lean verification error in plain English.
+    """
+    print(f"Received explain request for: {request.filename or 'unknown file'}")
+    
+    try:
+        prompt = EXPLAIN_PROMPT.format(
+            python_code=request.python_code or "(Not provided)",
+            lean_error=request.lean_error
+        )
+        
+        explanation = agents.call_gemini(
+            system_prompt="You are a helpful code review assistant.",
+            user_input=prompt
+        )
+        
+        return {
+            "success": True,
+            "explanation": explanation.strip(),
+            "filename": request.filename
+        }
+        
+    except Exception as e:
+        print(f"Error generating explanation: {e}")
+        return {
+            "success": False,
+            "explanation": f"Could not generate explanation: {str(e)}",
+            "filename": request.filename
+        }
