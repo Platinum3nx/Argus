@@ -220,6 +220,9 @@ import Mathlib.Tactic.SplitIfs
 import Mathlib.Data.List.Basic
 import Mathlib.Data.List.Nodup
 import Mathlib.Tactic.Linarith
+import Mathlib.Data.Int.Order.Basic
+import Mathlib.Algebra.Order.Ring.Lemmas
+import Mathlib.Tactic.Positivity
 ```
 
 ### 7. Tactic Strategies (in order of preference)
@@ -399,6 +402,8 @@ def _deterministic_membership_translation(python_code: str) -> str | None:
 import Mathlib.Data.List.Basic
 import Mathlib.Data.List.Nodup
 import Mathlib.Tactic.Linarith
+import Mathlib.Data.Int.Order.Basic
+import Mathlib.Algebra.Order.Ring.Lemmas
 import Aesop
 
 def {func_name} ({list_param} : List Int) ({element_param} : Int) : List Int :=

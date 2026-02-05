@@ -395,6 +395,9 @@ def translate_with_theorem(python_code: str) -> str:
 import Mathlib.Data.List.Basic
 import Mathlib.Data.List.Nodup
 import Mathlib.Tactic.Linarith
+import Mathlib.Data.Int.Order.Basic
+import Mathlib.Algebra.Order.Ring.Lemmas
+import Mathlib.Tactic.Positivity
 
 """
     
