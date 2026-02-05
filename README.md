@@ -2,7 +2,7 @@
 
 ## Neuro-Symbolic AI Security Auditor
 
-**Mathematically Verified Code Repair Powered by Gemini 3 + Lean 4**
+**Mathematically Verified Code Repair Powered by Gemini 3 Pro + Lean 4**
 
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Ready-success)](https://github.com/Platinum3nx/Argus)
 [![Gemini 3](https://img.shields.io/badge/Gemini-3.0%20Pro-blue)](https://ai.google.dev/)
@@ -33,7 +33,7 @@ Argus is a **zero-config GitHub Action** that combines the creativity of **Gemin
 flowchart TD
     Start([Python Code]) --> Scan{Secrets Scan}
     Scan -- Found Secrets --> Report([Report Issue])
-    Scan -- Safe --> Trans[AI Translator<br/>Gemini 3]
+    Scan -- Safe --> Trans[AI Translator<br/>Gemini 3 Pro]
     
     Trans --> Lean[Lean 4 Verifier]
     
