@@ -18,32 +18,39 @@ RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -
 # 4. Set working directory
 WORKDIR /app
 
-# 5. Copy the lean_project Lean project (with Mathlib dependency)
+# 5. CACHE-BUST for Lean project - change this to force Mathlib rebuild
+ARG LEAN_PROJECT_VERSION=2026-02-05-v12
+RUN echo "Lean project version: ${LEAN_PROJECT_VERSION}"
+
+# 6. Copy the lean_project Lean project (with Mathlib dependency)
 COPY lean_project ./lean_project
 
-# 6. Download Mathlib cache (required for split_ifs tactic)
+# 7. Download Mathlib cache (required for split_ifs tactic)
 WORKDIR /app/lean_project
 RUN lake update && lake exe cache get
 
-# 7. Return to app directory
+# 8. Test that Lean works
+RUN echo 'Testing Lean installation...' && lean --version && lake --version
+
+# 9. Return to app directory
 WORKDIR /app
 
-# 8. Install Python dependencies
+# 10. Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 9. Cache-bust: Change this version to force Docker to re-copy backend code
-ARG BUILD_VERSION=2026-02-05-v11-mathlib-git
+# 11. Cache-bust for backend code
+ARG BUILD_VERSION=2026-02-05-v12-lean-cache-bust
 RUN echo "Build version: ${BUILD_VERSION}"
 
-# 10. Copy backend code (this will now always be fresh due to cache-bust above)
+# 12. Copy backend code
 COPY . ./backend
 
-# 11. Setup environment
+# 13. Setup environment
 EXPOSE 8000
 ENV PYTHONPATH=/app
 
-# 12. Entrypoint
+# 14. Entrypoint
 RUN chmod +x /app/backend/entrypoint.sh
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

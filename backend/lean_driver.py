@@ -130,6 +130,16 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
         # 3. Process results
         compiled = (return_code == 0)
         
+        # Log detailed output for debugging
+        if not compiled:
+            print(f"[Lean Driver] ❌ Compilation FAILED (exit code {return_code})")
+            if stdout.strip():
+                print(f"[Lean Driver] STDOUT:\n{stdout[:1000]}")  # Limit output
+            if stderr.strip():
+                print(f"[Lean Driver] STDERR:\n{stderr[:1000]}")
+        else:
+            print(f"[Lean Driver] ✅ Compilation succeeded")
+        
         # CRITICAL: Check for 'sorry' - this skips proofs
         has_sorry = _contains_sorry(lean_code)
         
@@ -143,6 +153,7 @@ def run_verification(lean_code: str) -> Dict[str, Any]:
         
         # Add sorry warning to error message if applicable
         if has_sorry and compiled:
+
             full_output = "WARNING: Proof uses 'sorry' (incomplete proof)\n\n" + full_output
         
         distinct_errors = []
