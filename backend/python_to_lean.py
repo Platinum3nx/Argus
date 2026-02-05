@@ -392,12 +392,7 @@ def translate_with_theorem(python_code: str) -> str:
     # - Linarith: powerful fallback for linear arithmetic
     # Note: omega is built into Lean 4 std, no explicit import needed
     imports = """import Mathlib.Tactic.SplitIfs
-import Mathlib.Data.List.Basic
-import Mathlib.Data.List.Nodup
 import Mathlib.Tactic.Linarith
-import Mathlib.Data.Int.Order.Basic
-import Mathlib.Algebra.Order.Ring.Lemmas
-import Mathlib.Tactic.Positivity
 
 """
     

@@ -19,7 +19,7 @@ RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -
 WORKDIR /app
 
 # 5. CACHE-BUST for Lean project - change this to force Mathlib rebuild
-ARG LEAN_PROJECT_VERSION=2026-02-05-v12
+ARG LEAN_PROJECT_VERSION=2026-02-05-v13-minimal-imports
 RUN echo "Lean project version: ${LEAN_PROJECT_VERSION}"
 
 # 6. Copy the lean_project Lean project (with Mathlib dependency)
