@@ -231,6 +231,29 @@ case isTrue => <proof for true branch>
 case isFalse => <proof for false branch>
 ```
 
+**CRITICAL: For integer arithmetic with let bindings:**
+The `linarith` tactic CANNOT see through `let` bindings. You MUST use one of these approaches:
+
+1. **Best approach - use omega directly:**
+```lean
+split_ifs <;> omega
+```
+The `omega` tactic can handle `let` bindings automatically.
+
+2. **If omega fails, use simp_all before linarith:**
+```lean
+split_ifs with h
+· simp_all only []
+  linarith
+```
+
+**NEVER write proofs like this (they will FAIL):**
+```lean
+-- WRONG: linarith cannot see through let bindings!
+split_ifs with h
+· linarith  -- This will fail if the goal contains `let x := ...`
+```
+
 **For List.Nodup preservation:**
 ```lean
 apply List.nodup_append.mpr
@@ -241,17 +264,13 @@ constructor
 · <prove lists are disjoint>
 ```
 
-**For linear arithmetic:**
-- `omega` — Primary choice for Int arithmetic
-- `linarith` — Fallback for complex linear constraints
-- `simp` — For simplification
-
 **For membership/disjointness:**
 - `simp only [List.mem_singleton]` — For singleton membership
 - `intro x hx1 hx2` — For proving disjointness
 
 **CRITICAL: Never use `sorry` in final proofs!**
 If you cannot complete the proof, the code is buggy and should fail verification.
+
 
 ## OUTPUT FORMAT
 
