@@ -51,21 +51,22 @@ def _get_lean_project_path() -> str:
     Get the path to the Lean project directory.
     
     In Docker (CI): Uses /app/lean_project (pre-configured with Mathlib)
-    Locally: Uses a temp directory
+    Locally: Uses backend/lean_project in the repo
     """
     # Check if we're in Docker (CI environment)
     docker_lean_path = "/app/lean_project"
     if os.path.exists(docker_lean_path) and os.path.isdir(docker_lean_path):
         return docker_lean_path
     
-    # Check for local Lean project in repo root
+    # Check for local Lean project in backend folder
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    local_lean_path = os.path.join(base_dir, "lean_project")
+    local_lean_path = os.path.join(base_dir, "backend", "lean_project")
     if os.path.exists(local_lean_path) and os.path.isdir(local_lean_path):
         return local_lean_path
     
     # Fallback: use temp directory (basic proofs only, no Mathlib)
     return tempfile.gettempdir()
+
 
 
 def run_verification(lean_code: str) -> Dict[str, Any]:
