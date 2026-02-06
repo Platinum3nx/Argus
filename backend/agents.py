@@ -160,36 +160,41 @@ def _is_complex_code(code: str) -> bool:
     """
     Detect if Python code requires the advanced (LLM-based) translator.
     
-    Returns True if code contains:
+    Returns True if code contains ACTUAL code patterns (not just text in comments):
     - List type hints or operations
     - Set operations
     - Complex data structures
     - List comprehensions
     """
+    # Step 1: Strip docstrings and comments to avoid false positives from prose
+    # Remove triple-quoted strings (docstrings)
+    code_stripped = re.sub(r'"""[\s\S]*?"""', '', code)
+    code_stripped = re.sub(r"'''[\s\S]*?'''", '', code_stripped)
+    # Remove single-line comments
+    code_stripped = re.sub(r'#.*$', '', code_stripped, flags=re.MULTILINE)
+    
+    # Patterns that REQUIRE LLM translation (actual code constructs, not prose)
+    # These are precise patterns that indicate complex data structures
     complex_patterns = [
-        "List[",           # Type hints: List[int], List[str]
-        "Set[",            # Set type hints
-        "Dict[",           # Dictionary type hints
-        " in ",            # Membership checks
-        ".append(",        # List append
-        ".extend(",        # List extend
-        ".remove(",        # List/set remove
-        ".add(",           # Set add
-        " for ",           # Comprehensions or loops
-        "Optional[",       # Optional type hints
-        "Tuple[",          # Tuple type hints
-        "sorted(",         # Sorted operations
-        "filter(",         # Filter operations
-        "map(",            # Map operations
-        "# No duplicates", # Invariant comments
-        "# unique",
-        "# sorted",
-        "# non-empty",
+        r'\bList\[',           # Type hints: List[int], List[str]
+        r'\bSet\[',            # Set type hints
+        r'\bDict\[',           # Dictionary type hints
+        r'\bOptional\[',       # Optional type hints
+        r'\bTuple\[',          # Tuple type hints
+        r'\.append\s*\(',      # List append
+        r'\.extend\s*\(',      # List extend
+        r'\.remove\s*\(',      # List/set remove
+        r'\.add\s*\(',         # Set add (method call, not math)
+        r'\bfor\s+\w+\s+in\s+',  # For loops: "for x in items"
+        r'\[\s*\w+\s+for\s+',    # List comprehensions: [x for x in ...]
+        r'\bif\s+\w+\s+in\s+\w+',  # Membership: "if x in items" (not "in cents")
+        r'\bsorted\s*\(',      # Sorted operations
+        r'\bfilter\s*\(',      # Filter operations
+        r'\bmap\s*\(',         # Map operations
     ]
     
-    code_lower = code.lower()
     for pattern in complex_patterns:
-        if pattern.lower() in code_lower:
+        if re.search(pattern, code_stripped):
             return True
     
     return False

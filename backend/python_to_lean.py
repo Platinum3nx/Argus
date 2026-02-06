@@ -162,6 +162,15 @@ class PythonToLeanTranslator(ast.NodeVisitor):
             if x then a
             else if y then b
             else c
+            
+        Also handles reassignment patterns:
+            if balance < 0:
+                balance = 0
+            return balance + amount
+            
+        Becomes:
+            let balance_safe := if balance < 0 then 0 else balance
+            balance_safe + amount
         """
         prefix = " " * indent
         
@@ -180,9 +189,34 @@ class PythonToLeanTranslator(ast.NodeVisitor):
                 rest_code = self._translate_guard_pattern(rest, indent)
                 return f"{prefix}let {target.id} := {value}\n{rest_code}"
         
-        # Handle if statement (guard)
+        # Handle if statement (guard or reassignment pattern)
         if isinstance(first, ast.If):
             cond = self._translate_expr(first.test)
+            
+            # Check if this is a REASSIGNMENT pattern (if body has only assignment, no return)
+            if self._is_reassignment_if(first):
+                # Convert: if x < 0: x = 0  ->  let x_safe := if x < 0 then 0 else x
+                assign = first.body[0] if isinstance(first.body[0], ast.Assign) else \
+                         (first.body[1] if len(first.body) > 1 and isinstance(first.body[1], ast.Assign) else None)
+                
+                if assign and isinstance(assign.targets[0], ast.Name):
+                    var_name = assign.targets[0].id
+                    new_value = self._translate_expr(assign.value)
+                    # Create inline if-then-else for let binding
+                    # IMPORTANT: Use original var_name in the condition, not the _safe version
+                    let_line = f"{prefix}let {var_name}_safe := if {cond} then {new_value} else {var_name}"
+                    
+                    # Process the rest of the code
+                    rest_code = self._translate_guard_pattern(rest, indent)
+                    
+                    # NOW substitute old var name with safe name in the REST code only
+                    # Use word boundaries to avoid partial matches
+                    import re
+                    rest_code = re.sub(rf'\b{var_name}\b', f'{var_name}_safe', rest_code)
+                    
+                    return f"{let_line}\n{rest_code}"
+            
+            # Standard guard pattern: if with return
             then_body = self._get_return_expr(first.body)
             
             if first.orelse:
@@ -212,6 +246,27 @@ class PythonToLeanTranslator(ast.NodeVisitor):
         
         return prefix + "sorry"
     
+    def _is_reassignment_if(self, node: ast.If) -> bool:
+        """
+        Detect if an if-statement is a reassignment pattern (no return, just assignment).
+        
+        Pattern: if condition: var = value (with no return)
+        """
+        if node.orelse:  # Has else clause - not a simple reassignment
+            return False
+        
+        # Check if body contains only assignments (and maybe docstrings)
+        for stmt in node.body:
+            if isinstance(stmt, ast.Expr):
+                continue  # Skip docstrings
+            if isinstance(stmt, ast.Assign):
+                return True  # Found assignment - this is reassignment pattern
+            if isinstance(stmt, ast.Return):
+                return False  # Has return - not a reassignment
+        
+        return False
+
+    
     
     def _translate_if(self, node: ast.If, indent: int) -> str:
         """Translate if/else statement."""
@@ -234,7 +289,15 @@ class PythonToLeanTranslator(ast.NodeVisitor):
             return f"{prefix}if {cond} then {then_body} else sorry"
     
     def _get_return_expr(self, body: list) -> str:
-        """Get the return expression from a body, handling let bindings."""
+        """Get the return expression from a body, handling let bindings.
+        
+        For reassignment patterns like:
+            if x < 0:
+                x = 0  # This is reassignment
+            return x + y
+        
+        We generate: let x_safe := 0; x_safe + y
+        """
         let_bindings = []
         return_expr = None
         
@@ -245,18 +308,25 @@ class PythonToLeanTranslator(ast.NodeVisitor):
                 target = stmt.targets[0]
                 if isinstance(target, ast.Name):
                     value = self._translate_expr(stmt.value)
-                    let_bindings.append(f"let {target.id} := {value}")
+                    # Use _safe suffix to avoid shadowing issues
+                    let_bindings.append(f"let {target.id}_safe := {value}")
             elif isinstance(stmt, ast.If):
                 return self._translate_if(stmt, 0).strip()
         
         if let_bindings and return_expr:
-            # Combine let bindings with return - use newline and consistent formatting
-            # In Lean 4, let bindings in expressions need proper structure
+            # Combine let bindings with return
             result = let_bindings[0]
             for binding in let_bindings[1:]:
                 result += f"; {binding}"
             result += f"; {return_expr}"
             return result
+        
+        # If we have ONLY assignments (no return), this is a side-effect block
+        # commonly used for reassignment like: if x < 0: x = 0
+        # For Lean, we need to return a value. Use the assigned value.
+        if let_bindings and not return_expr:
+            # Return the last assigned value
+            return let_bindings[-1].replace("let ", "").replace(":=", ";")
         
         return return_expr or "sorry"
     
@@ -324,6 +394,7 @@ class PythonToLeanTranslator(ast.NodeVisitor):
             ast.Sub: "-",
             ast.Mult: "*",
             ast.Div: "/",
+            ast.FloorDiv: "/",  # Lean's Int / Int is floor division
             ast.Mod: "%",
         }
         return ops.get(type(op), "?")
