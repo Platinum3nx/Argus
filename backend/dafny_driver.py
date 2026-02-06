@@ -12,33 +12,29 @@ import uuid
 from typing import Optional
 
 
+import shutil
+
 def get_dafny_path() -> str:
     """
     Get the path to the Dafny executable.
     
-    In Docker, we install Dafny to /opt/dafny.
-    Locally, it might be in PATH or a custom location.
+    Checks PATH first, then common locations.
     """
-    # Check common locations
+    # 1. Check PATH (best for robust installs)
+    if shutil.which("dafny"):
+        return "dafny"
+
+    # 2. Check common paths (fallback)
     paths_to_check = [
-        "/opt/dafny/dafny",  # Docker installation
-        "/usr/local/bin/dafny",  # Linux/Mac installation
-        "dafny",  # In PATH
+        "/opt/dafny/dafny",
+        "/usr/local/bin/dafny",
     ]
     
     for path in paths_to_check:
-        try:
-            result = subprocess.run(
-                [path, "--version"],
-                capture_output=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                return path
-        except (subprocess.SubprocessError, FileNotFoundError):
-            continue
-    
-    return "dafny"  # Fallback, let it fail with clear error
+        if os.path.exists(path) and os.access(path, os.X_OK):
+            return path
+            
+    return "dafny"  # Fallback
 
 
 def run_verification(dafny_code: str, timeout: int = 120) -> dict:

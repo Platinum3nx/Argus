@@ -16,17 +16,21 @@ ENV PATH="${ELAN_HOME}/bin:${PATH}"
 # 3. Install elan and the specific Lean 4 version (must match lean-toolchain)
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.14.0
 
-# 4. Install Dafny 4.x
-# Download from GitHub releases and extract to /opt/dafny
+# 4. Install Dafny 4.9.0
+# Robust install: Find the binary and symlink it
 ARG DAFNY_VERSION=4.9.0
 RUN mkdir -p /opt/dafny && \
     curl -L "https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-20.04.zip" -o /tmp/dafny.zip && \
-    unzip -q /tmp/dafny.zip -d /opt && \
-    mv /opt/dafny-${DAFNY_VERSION}-x64-ubuntu-20.04/* /opt/dafny/ 2>/dev/null || mv /opt/dafny-*/* /opt/dafny/ 2>/dev/null || true && \
-    chmod +x /opt/dafny/dafny && \
-    rm -rf /tmp/dafny.zip /opt/dafny-*
+    unzip -q /tmp/dafny.zip -d /opt/dafny_extract && \
+    # Find the 'dafny' executable (it might be in a subdir)
+    find /opt/dafny_extract -name dafny -type f -executable -exec cp {} /usr/local/bin/dafny \; -quit && \
+    # Also find z3 if it's there (often needed)
+    find /opt/dafny_extract -name z3 -type f -executable -exec cp {} /usr/local/bin/z3 \; -quit || true && \
+    # Move library files to /opt/dafny for reference (optional but good)
+    mv /opt/dafny_extract/* /opt/dafny/ 2>/dev/null || true && \
+    rm -rf /tmp/dafny.zip /opt/dafny_extract
 
-# Add Dafny to PATH
+# Add Dafny to PATH (already in /usr/local/bin, but just in case)
 ENV PATH="/opt/dafny:${PATH}"
 
 # 5. Test Dafny installation
@@ -57,7 +61,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 13. Cache-bust for backend code
-ARG BUILD_VERSION=2026-02-06-v19-simp-all-fix
+ARG BUILD_VERSION=2026-02-06-v20-dafny-robust-install
 RUN echo "Build version: ${BUILD_VERSION}"
 
 # 14. Copy backend code
