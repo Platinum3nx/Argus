@@ -461,21 +461,18 @@ def generate_theorem(func_name: str = "withdraw", first_param: str = "balance") 
     - Proves result is >= 0
     - Uses split_ifs and omega tactics
     
-    TACTIC STRATEGY:
-    - `try simp only []` - unfolds let bindings if present, no-op if not (won't fail)
-    - `first | assumption | omega` - tries assumption first (for h_bal ⊢ balance ≥ 0),
-      then omega for arithmetic
+    TACTIC STRATEGY (Lean 4 syntax):
+    - `simp_all` - simplifies using all hypotheses (handles both let bindings AND h_bal)
+    - `omega` - solves linear arithmetic
     
     NO LLM INVOLVED - this is 100% deterministic.
     """
-    # Robust tactic chain that handles:
-    # 1. Let bindings (simp unfolds them)
-    # 2. Goals matching hypothesis exactly (assumption)
-    # 3. Arithmetic goals (omega)
+    # simp_all uses all hypotheses to simplify, including h_bal
+    # This handles the case where goal is exactly h_bal
     return f"""theorem verify_safety ({first_param} amount : Int) (h_bal : {first_param} ≥ 0) : 
   {func_name} {first_param} amount ≥ 0 := by
   unfold {func_name}
-  split_ifs <;> (try simp only []; first | assumption | omega)"""
+  split_ifs <;> simp_all <;> omega"""
 
 
 def translate_with_theorem(python_code: str) -> str:
