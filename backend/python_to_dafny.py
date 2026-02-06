@@ -245,14 +245,23 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         seq_name = self._translate_expr(node.iter)
         idx_var = f"__idx_{item_var}"
         
+        # Detect accumulator variables that should have invariants
+        # These are variables that start at 0 and are only increased
+        accumulators = self._find_accumulator_vars(node.body)
+        
         lines = [
             f"{prefix}var {idx_var} := 0;",
             f"{prefix}while ({idx_var} < |{seq_name}|)",
             f"{prefix}  invariant 0 <= {idx_var} <= |{seq_name}|",
-            f"{prefix}  decreases |{seq_name}| - {idx_var}",
-            f"{prefix}{{",
-            f"{prefix}  var {item_var} := {seq_name}[{idx_var}];",
         ]
+        
+        # Add invariants for accumulator variables
+        for acc_var in accumulators:
+            lines.append(f"{prefix}  invariant {acc_var} >= 0")
+        
+        lines.append(f"{prefix}  decreases |{seq_name}| - {idx_var}")
+        lines.append(f"{prefix}{{")
+        lines.append(f"{prefix}  var {item_var} := {seq_name}[{idx_var}];")
         
         # Translate loop body
         lines.append(self._translate_body(node.body, indent + 1))
@@ -262,6 +271,40 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         lines.append(f"{prefix}}}")
         
         return "\n".join(lines)
+    
+    def _find_accumulator_vars(self, body: List[ast.stmt]) -> List[str]:
+        """
+        Find accumulator variables in loop body.
+        
+        An accumulator is a variable that:
+        - Is assigned to with += or = var + expr
+        - The increment is guarded by a condition (if x > 0)
+        """
+        accumulators = []
+        
+        for stmt in body:
+            if isinstance(stmt, ast.AugAssign):
+                # x += value pattern
+                if isinstance(stmt.target, ast.Name):
+                    if isinstance(stmt.op, ast.Add):
+                        accumulators.append(stmt.target.id)
+            elif isinstance(stmt, ast.If):
+                # Check inside if body for accumulator patterns
+                for inner in stmt.body:
+                    if isinstance(inner, ast.Assign):
+                        target = inner.targets[0]
+                        if isinstance(target, ast.Name):
+                            # Check if right side is var + something
+                            if isinstance(inner.value, ast.BinOp):
+                                if isinstance(inner.value.left, ast.Name):
+                                    if inner.value.left.id == target.id:
+                                        accumulators.append(target.id)
+                    elif isinstance(inner, ast.AugAssign):
+                        if isinstance(inner.target, ast.Name):
+                            if isinstance(inner.op, ast.Add):
+                                accumulators.append(inner.target.id)
+        
+        return list(set(accumulators))  # Remove duplicates
     
     def _translate_while(self, node: ast.While, indent: int) -> str:
         """Translate Python while loop to Dafny."""
