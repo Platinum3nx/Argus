@@ -226,8 +226,14 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
             f"{prefix}while ({var_name} < {end})",
             f"{prefix}  invariant {start} <= {var_name} <= {end}",
             f"{prefix}  decreases {end} - {var_name}",
-            f"{prefix}{{",
         ]
+        
+        # Detect and add accumulator invariants
+        accumulators = self._find_accumulator_vars(node.body)
+        for acc_var in accumulators:
+            lines.append(f"{prefix}  invariant {acc_var} >= 0")
+        
+        lines.append(f"{prefix}{{")
         
         # Translate loop body
         lines.append(self._translate_body(node.body, indent + 1))
@@ -243,7 +249,7 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         prefix = "  " * indent
         item_var = node.target.id if isinstance(node.target, ast.Name) else "item"
         seq_name = self._translate_expr(node.iter)
-        idx_var = f"__idx_{item_var}"
+        idx_var = f"idx_{item_var}"
         
         # Detect accumulator variables that should have invariants
         # These are variables that start at 0 and are only increased
