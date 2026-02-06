@@ -461,12 +461,16 @@ def generate_theorem(func_name: str = "withdraw", first_param: str = "balance") 
     - Proves result is >= 0
     - Uses split_ifs and omega tactics
     
+    CRITICAL: omega can't see through let bindings that split_ifs creates.
+    We must use `simp only []` to unfold let bindings before omega.
+    
     NO LLM INVOLVED - this is 100% deterministic.
     """
+    # simp only [] unfolds let bindings so omega can see the arithmetic
     return f"""theorem verify_safety ({first_param} amount : Int) (h_bal : {first_param} ≥ 0) : 
   {func_name} {first_param} amount ≥ 0 := by
   unfold {func_name}
-  split_ifs <;> omega"""
+  split_ifs <;> (simp only []; omega)"""
 
 
 def translate_with_theorem(python_code: str) -> str:
