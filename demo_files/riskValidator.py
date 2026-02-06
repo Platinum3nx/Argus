@@ -1,5 +1,6 @@
 """
-Risk Validator - List & Array Validation Demo.
+Risk Validator - Finance Demo.
+Test Type: List & Array Validations
 
 This file demonstrates Argus's new Dafny backend verifying logic that
 inspects lists for specific conditions (counting, finding maximums).

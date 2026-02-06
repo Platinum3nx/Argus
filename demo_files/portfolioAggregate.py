@@ -1,5 +1,6 @@
 """
-Batch Processor - Loop-Based Aggregation Demo.
+Portfolio Aggregate - Finance Demo.
+Test Type: Loop-Based Aggregation
 
 This file demonstrates Argus's new Dafny backend ensuring that
 accumulated values (sums, totals) maintain safety properties (non-negativity)
