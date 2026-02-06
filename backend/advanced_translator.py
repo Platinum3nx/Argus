@@ -512,8 +512,8 @@ def sanitize_variable_shadowing(lean_code: str) -> str:
                 in_function = True
                 after_let_safe = False
                 new_lines.append(line)
-            elif line.strip().startswith('theorem ') or line.strip().startswith('-- ') or line.strip().startswith('/-'):
-                # We're leaving function definitions
+            elif line.strip().startswith('theorem '):
+                # We're leaving function definitions (theorem is a new proof section)
                 if current_function_body:
                     new_lines.extend(current_function_body)
                 current_function_body = []
@@ -594,28 +594,29 @@ def sanitize_proof_tactics(lean_code: str) -> str:
     replacements = 0
     
     # Pattern 1: <;> omega (without parentheses)
-    if '<;> omega' in result and '<;> (simp only []; omega)' not in result:
+    # Use 'try simp only []' to avoid "simp made no progress" errors
+    if '<;> omega' in result and '<;> (try simp only []; omega)' not in result:
         result = re.sub(
             r'<;>\s*omega\b',
-            '<;> (simp only []; omega)',
+            '<;> (try simp only []; omega)',
             result
         )
         replacements += 1
     
     # Pattern 2: <;> try omega
-    if '<;> try omega' in result and '<;> try (simp only []; omega)' not in result:
+    if '<;> try omega' in result and '<;> try (try simp only []; omega)' not in result:
         result = re.sub(
             r'<;>\s*try\s+omega\b',
-            '<;> try (simp only []; omega)',
+            '<;> try (try simp only []; omega)',
             result
         )
         replacements += 1
     
     # Pattern 3: Standalone omega at end of proof (after ·)
-    # · omega  →  · simp only []; omega
+    # · omega  →  · try simp only []; omega
     result = re.sub(
         r'(·\s*)omega\b(?!\s*\))',
-        r'\1simp only []; omega',
+        r'\1try simp only []; omega',
         result
     )
     
