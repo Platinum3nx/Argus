@@ -17,24 +17,39 @@ ENV PATH="${ELAN_HOME}/bin:${PATH}"
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.14.0
 
 # 4. Install Dafny 4.9.0
-# Robust install: Find the binary and symlink it
+# Cache buster to force rebuild of Dafny installation
+ARG DAFNY_BUILD_VERSION=v2-robust-find
+RUN echo "Dafny build version: ${DAFNY_BUILD_VERSION}"
+
+# Robust install: Download, find binary, and symlink it
 ARG DAFNY_VERSION=4.9.0
 RUN mkdir -p /opt/dafny && \
+    echo "Downloading Dafny ${DAFNY_VERSION}..." && \
     curl -L "https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-20.04.zip" -o /tmp/dafny.zip && \
+    echo "Extracting..." && \
     unzip -q /tmp/dafny.zip -d /opt/dafny_extract && \
-    # Find the 'dafny' executable (it might be in a subdir)
-    find /opt/dafny_extract -name dafny -type f -executable -exec cp {} /usr/local/bin/dafny \; -quit && \
-    # Also find z3 if it's there (often needed)
-    find /opt/dafny_extract -name z3 -type f -executable -exec cp {} /usr/local/bin/z3 \; -quit || true && \
-    # Move library files to /opt/dafny for reference (optional but good)
-    mv /opt/dafny_extract/* /opt/dafny/ 2>/dev/null || true && \
-    rm -rf /tmp/dafny.zip /opt/dafny_extract
+    echo "Contents of /opt/dafny_extract:" && \
+    ls -la /opt/dafny_extract && \
+    echo "Finding dafny binary..." && \
+    find /opt/dafny_extract -name "dafny" -type f | head -5 && \
+    # Copy the dafny binary (it's usually a script, not necessarily executable yet)
+    find /opt/dafny_extract -name "dafny" -type f -exec cp {} /usr/local/bin/dafny \; -quit && \
+    chmod +x /usr/local/bin/dafny && \
+    # Also find and copy z3
+    find /opt/dafny_extract -name "z3" -type f -exec cp {} /usr/local/bin/z3 \; -quit || true && \
+    chmod +x /usr/local/bin/z3 2>/dev/null || true && \
+    # Clean up
+    rm -rf /tmp/dafny.zip /opt/dafny_extract && \
+    echo "Dafny installed to /usr/local/bin/dafny"
 
-# Add Dafny to PATH (already in /usr/local/bin, but just in case)
-ENV PATH="/opt/dafny:${PATH}"
+# Add to PATH and verify
+ENV PATH="/usr/local/bin:${PATH}"
 
-# 5. Test Dafny installation
-RUN echo 'Testing Dafny installation...' && dafny --version || echo 'Dafny installation check (may fail in some environments)'
+# 5. Test Dafny installation (MUST succeed)
+RUN echo 'Testing Dafny installation...' && \
+    which dafny && \
+    dafny --version && \
+    echo '✅ Dafny is working!'
 
 # 6. Set working directory
 WORKDIR /app
