@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y \
     libgmp-dev \
     unzip \
     wget \
-    apt-transport-https \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Set ELAN_HOME to a global directory (Crucial for GitHub Actions)
@@ -18,16 +17,17 @@ ENV PATH="${ELAN_HOME}/bin:${PATH}"
 # 3. Install elan and the specific Lean 4 version (must match lean-toolchain)
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.14.0
 
-# 4. Install .NET 6 Runtime (required by Dafny 4.x)
-RUN wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb && \
-    apt-get update && \
-    apt-get install -y dotnet-runtime-6.0 && \
-    rm -rf /var/lib/apt/lists/*
+# 4. Install .NET 6 Runtime using official install script (auto-detects OS)
+ENV DOTNET_ROOT="/opt/dotnet"
+ENV PATH="${DOTNET_ROOT}:${PATH}"
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
+    chmod +x /tmp/dotnet-install.sh && \
+    /tmp/dotnet-install.sh --channel 6.0 --runtime dotnet --install-dir /opt/dotnet && \
+    rm /tmp/dotnet-install.sh && \
+    dotnet --info
 
 # 5. Install Dafny 4.9.0
-ARG DAFNY_BUILD_VERSION=v4-with-dotnet6
+ARG DAFNY_BUILD_VERSION=v5-dotnet-script
 RUN echo "Dafny build: ${DAFNY_BUILD_VERSION}"
 
 ARG DAFNY_VERSION=4.9.0
@@ -35,10 +35,9 @@ RUN curl -L "https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERS
     unzip -q /tmp/dafny.zip -d /opt && \
     rm /tmp/dafny.zip && \
     ls -la /opt && \
-    # The zip extracts to a folder like 'dafny' or 'dafny-4.9.0-...'
     mv /opt/dafny* /opt/dafny 2>/dev/null || true && \
     ls -la /opt/dafny && \
-    chmod +x /opt/dafny/dafny
+    chmod +x /opt/dafny/dafny || chmod +x /opt/dafny/Dafny || true
 
 ENV PATH="/opt/dafny:${PATH}"
 
@@ -72,7 +71,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 14. Cache-bust for backend code
-ARG BUILD_VERSION=2026-02-06-v21-dotnet-dafny
+ARG BUILD_VERSION=2026-02-06-v22-dotnet-install-script
 RUN echo "Build version: ${BUILD_VERSION}"
 
 # 15. Copy backend code
