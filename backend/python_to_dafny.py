@@ -26,6 +26,7 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         self.methods = []
         self.current_method_params = []
         self.declared_vars: Set[str] = set()  # Track declared variables
+        self.requires_nonneg_result = False  # Track if function ensures result >= 0
     
     def translate(self, python_code: str) -> str:
         """Translate Python code to Dafny."""
@@ -66,6 +67,14 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         
         # Extract specifications from docstring
         specs = self._extract_specs(node)
+        
+        # Determine if this function ensures result >= 0
+        # This controls whether we add accumulator invariants
+        ensures_list = specs.get("ensures", [])
+        self.requires_nonneg_result = any("result >= 0" in e or "result>=0" in e for e in ensures_list)
+        # Also true if no ensures specified (we add default result >= 0)
+        if not ensures_list:
+            self.requires_nonneg_result = True
         
         # Build method signature
         lines = [f"method {func_name}({params_str}) returns (result: {return_type})"]
@@ -228,10 +237,11 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
             f"{prefix}  decreases {end} - {var_name}",
         ]
         
-        # Detect and add accumulator invariants
-        accumulators = self._find_accumulator_vars(node.body)
-        for acc_var in accumulators:
-            lines.append(f"{prefix}  invariant {acc_var} >= 0")
+        # Detect and add accumulator invariants (only if function ensures result >= 0)
+        if self.requires_nonneg_result:
+            accumulators = self._find_accumulator_vars(node.body)
+            for acc_var in accumulators:
+                lines.append(f"{prefix}  invariant {acc_var} >= 0")
         
         lines.append(f"{prefix}{{")
         
@@ -261,9 +271,10 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
             f"{prefix}  invariant 0 <= {idx_var} <= |{seq_name}|",
         ]
         
-        # Add invariants for accumulator variables
-        for acc_var in accumulators:
-            lines.append(f"{prefix}  invariant {acc_var} >= 0")
+        # Add invariants for accumulator variables (only if function ensures result >= 0)
+        if self.requires_nonneg_result:
+            for acc_var in accumulators:
+                lines.append(f"{prefix}  invariant {acc_var} >= 0")
         
         lines.append(f"{prefix}  decreases |{seq_name}| - {idx_var}")
         lines.append(f"{prefix}{{")
