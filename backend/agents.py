@@ -62,6 +62,24 @@ Output: Return ONLY the fixed Lean code block with the corrected proof.
 
 TRIAGE_PROMPT = """Role: Senior Security Architect. Task: Identify the top 3 high-risk files. Output Format: Return ONLY the 3 filenames as a JSON list of strings."""
 
+EXPLAIN_PROMPT = """You are a senior software engineer explaining a bug to a developer.
+
+A formal verification tool (Lean 4) found a bug in this Python code. Your job is to explain:
+1. What the bug is (in plain English)
+2. Why it's dangerous
+3. How to fix it
+
+Be concise and practical. Use bullet points. Don't mention "Lean" or "theorem" - just explain the bug.
+
+## Python Code
+{python_code}
+
+## Verification Error
+{lean_error}
+
+## Your Explanation
+"""
+
 # --- HELPER FUNCTIONS ---
 
 def clean_response(text: str) -> str:
@@ -110,6 +128,27 @@ def triage_files(file_list: list[str]) -> list[str]:
     except json.JSONDecodeError:
         print(f"Error parsing triage: {response_text}")
         return []
+
+def explain_error(python_code: str, lean_error: str) -> str:
+    """
+    Generate a plain English explanation for a Lean verification error.
+    """
+    try:
+        content = f"Python Code:\n{python_code}\n\nVerification Error:\n{lean_error}"
+        # We pass empty string as template because EXPLAIN_PROMPT already has placeholders
+        # and we want to format it ourselves, but call_gemini appends content.
+        # Let's adjust slightly:
+        
+        # Actually call_gemini does: f"{prompt_template}\n\nUser Input:\n{content}"
+        # So we can just use a simple system prompt as template
+        
+        system_prompt = "You are a helpful code review assistant. Explain the bug concisely."
+        user_input = EXPLAIN_PROMPT.format(python_code=python_code, lean_error=lean_error)
+        
+        return call_gemini(system_prompt, user_input)
+    except Exception as e:
+        print(f"Error generating explanation: {e}")
+        return "Could not generate explanation."
 
 # --- MAIN AUDIT LOGIC ---
 

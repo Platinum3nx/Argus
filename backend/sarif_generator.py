@@ -11,38 +11,45 @@ import json
 import os
 from typing import List, Dict, Any
 
-def clean_lean_error(lean_message: str, error_message: str = "") -> str:
+def clean_lean_error(lean_message: str, error_message: str = "", ai_explanation: str = "") -> str:
     """
     Clean raw Lean error output to show only human-readable explanations.
     
     Priority:
-    1. Lean compiler error messages (error_message from lean_driver)
-    2. Lines starting with '--' (comments explaining the error)
-    3. Fallback to last few lines of output
+    1. AI explanation (if available)
+    2. Lean compiler error messages (sanitized)
+    3. Lines starting with '--' (comments explaining the error)
+    4. Fallback to last few lines of output
     """
-    # First, try to extract meaningful error from the compiler output
+    # 1. AI Explanation (Golden Path)
+    if ai_explanation and len(ai_explanation) > 10:
+        return ai_explanation
+
+    # 2. Extract meaningful error from compiler output
     if error_message:
+        # Clean up temporary filenames (verify_UUID.lean)
+        import re
+        cleaned_msg = re.sub(r'verify_[a-f0-9-]+\.lean:\d+:\d+:', '', error_message)
+        
         error_lines = []
-        for line in error_message.split('\n'):
+        for line in cleaned_msg.split('\n'):
             stripped = line.strip()
             # Look for actual error descriptions
             if 'error:' in stripped.lower():
-                # Extract just the error message, not the file path
-                if ':' in stripped:
-                    parts = stripped.split('error:', 1)
-                    if len(parts) > 1:
-                        error_lines.append(f"Error: {parts[1].strip()}")
-                    else:
-                        error_lines.append(stripped)
+                parts = stripped.split('error:', 1)
+                if len(parts) > 1:
+                    error_lines.append(f"Error: {parts[1].strip()}")
+                else:
+                    error_lines.append(stripped)
             elif 'unsolved goals' in stripped.lower():
                 error_lines.append("Proof failed: could not verify safety invariant")
-            elif 'omega' in stripped.lower() and ('failed' in stripped.lower() or 'could not' in stripped.lower()):
+            elif 'omega' in stripped.lower() and 'could not prove' in stripped.lower():
                 error_lines.append("Arithmetic safety check failed - possible overflow or underflow")
         
         if error_lines:
             return '\n'.join(error_lines[:3])  # Limit to first 3 errors
     
-    # Fallback: look for comment explanations in the Lean source
+    # 3. Fallback: look for comment explanations in the Lean source
     lines = lean_message.split('\n')
     cleaned_lines = []
     
@@ -138,6 +145,7 @@ def generate_sarif(results: List[Dict[str, Any]], secrets_findings: List[Any], r
             filename = r.get("filename")
             proof = r.get("proof", "Verification failed")
             error_msg = r.get("error_message", "")
+            ai_expl = r.get("ai_explanation", "")
             
             # Default line number to 1 if we can't parse it from the error
             # In a real impl, we'd parse the Lean error to find the exact line
@@ -146,7 +154,7 @@ def generate_sarif(results: List[Dict[str, Any]], secrets_findings: List[Any], r
             result_item = {
                 "ruleId": "ARGUS001",
                 "message": {
-                    "text": f"Argus Logic Audit:\n\n{clean_lean_error(proof, error_msg)}"
+                    "text": f"Argus Logic Audit:\n\n{clean_lean_error(proof, error_msg, ai_expl)}"
                 },
                 "level": "error",
                 "locations": [

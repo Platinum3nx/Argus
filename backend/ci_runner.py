@@ -55,48 +55,53 @@ def extract_counterexample(lean_output: str) -> dict:
     return counterexample
 
 
-def extract_error_explanation(lean_output: str, error_message: str = "") -> str:
+def extract_error_explanation(lean_output: str, error_message: str = "", ai_explanation: str = "") -> str:
     """
-    Extract the human-readable error explanation from Lean output.
+    Extract the human-readable error explanation.
     
     Priority:
-    1. Lean compiler error messages (error_message from lean_driver)
-    2. Lines starting with '--' comments in the Lean code
-    3. Fallback message
+    1. AI-generated explanation (if available)
+    2. Lean compiler error messages (sanitized)
+    3. Lines starting with '--' comments
     """
-    # First, try to extract meaningful error from the compiler output
+    # 1. Prefer AI explanation if available
+    if ai_explanation and len(ai_explanation) > 10:
+        return ai_explanation
+
+    # 2. Extract meaningful error from compiler output & sanitize
     if error_message:
-        # Look for omega/split_ifs failure messages
+        # Clean up temporary filenames (verify_UUID.lean)
+        cleaned_msg = re.sub(r'verify_[a-f0-9-]+\.lean:\d+:\d+:', '', error_message)
+        
         error_lines = []
-        for line in error_message.split('\n'):
+        for line in cleaned_msg.split('\n'):
             stripped = line.strip()
-            # Skip import/def lines, keep error descriptions
             if 'error:' in stripped.lower():
-                error_lines.append(stripped)
+                parts = stripped.split('error:', 1)
+                if len(parts) > 1:
+                    error_lines.append(parts[1].strip())
+                else:
+                    error_lines.append(stripped)
             elif 'unsolved goals' in stripped.lower():
-                error_lines.append("Proof failed: could not verify safety invariant")
-            elif 'omega' in stripped.lower() and ('failed' in stripped.lower() or 'could not' in stripped.lower()):
-                error_lines.append("Arithmetic safety check failed - possible overflow or underflow")
+                error_lines.append("Proof failed: safety invariant could not be proven")
+            elif 'omega' in stripped.lower() and 'could not prove' in stripped.lower():
+                error_lines.append("Arithmetic check failed (possible overflow/underflow)")
         
         if error_lines:
-            return ' | '.join(error_lines[:3])  # Limit to first 3 errors
+            return ' | '.join(error_lines[:3])
     
-    # Fallback: look for comment explanations in the Lean source
+    # 3. Fallback: look for comment explanations
     explanations = []
     for line in lean_output.split('\n'):
-        stripped = line.strip()
-        if stripped.startswith('--'):
-            # Skip counterexample lines (handled separately)
-            if 'counterexample' not in stripped.lower():
-                explanation = stripped[2:].strip()
-                if explanation and len(explanation) > 10:
-                    explanations.append(explanation)
+        if line.strip().startswith('--') and 'counterexample' not in line.lower():
+            explanation = line.strip()[2:].strip()
+            if len(explanation) > 10:
+                explanations.append(explanation)
     
     if explanations:
         return ' '.join(explanations)
     
-    # Default fallback
-    return "Formal verification failed - the code does not satisfy safety invariants"
+    return "Formal verification failed - safety conditions not met."
 
 
 def generate_json_report(results: list, secrets_findings: list, repo_name: str = None) -> dict:
@@ -121,7 +126,7 @@ def generate_json_report(results: list, secrets_findings: list, repo_name: str =
             "status": r["status"],
             "original_code": r.get("original_code", ""),
             "lean_proof": lean_proof,
-            "error_explanation": extract_error_explanation(lean_proof, r.get("error_message", "")) if r["status"] == "VULNERABLE" else None,
+            "error_explanation": extract_error_explanation(lean_proof, r.get("error_message", ""), r.get("ai_explanation", "")) if r["status"] == "VULNERABLE" else None,
             "counterexample": extract_counterexample(lean_proof) if r["status"] == "VULNERABLE" else None,
             "suggested_fix": r.get("suggested_fix") or r.get("fixed_code"),
             "fix_verified": r["status"] == "AUTO_PATCHED"
@@ -275,7 +280,8 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
         if r["status"] == "VULNERABLE":
             proof = r.get("proof", "")
             error_msg = r.get("error_message", "")
-            explanation = extract_error_explanation(proof, error_msg)
+            ai_expl = r.get("ai_explanation", "")
+            explanation = extract_error_explanation(proof, error_msg, ai_expl)
             counterexample = extract_counterexample(proof)
             
             report_lines.append("\n#### ⚠️ Why is this Vulnerable?")
@@ -461,7 +467,15 @@ def main():
                 print(f"\n[{filename}] ❌ VULNERABLE - Initiating repair loop...")
                 
                 # Get the Lean error message for the AI
-                lean_error = result.get("proof", "Verification failed")
+                lean_error = result.get("error_message", "") or "Verification failed"
+                
+                # 2.5: Generate AI Explanation
+                print(f"[{filename}] Generating AI explanation for the vulnerability...")
+                try:
+                    ai_explanation = agents.explain_error(content, lean_error)
+                    result["ai_explanation"] = ai_explanation
+                except Exception as e:
+                    print(f"[{filename}] Failed to generate explanation: {e}")
                 
                 # Attempt AI-powered repair
                 repair_result = attempt_repair(
