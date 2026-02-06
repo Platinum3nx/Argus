@@ -577,6 +577,59 @@ def sanitize_variable_shadowing(lean_code: str) -> str:
     return result
 
 
+def sanitize_proof_tactics(lean_code: str) -> str:
+    """
+    CRITICAL: Fix proof tactics to handle let bindings.
+    
+    The omega tactic CANNOT simplify through let bindings like:
+        let balance_safe := balance; balance_safe + amount
+    
+    Omega sees this as a separate variable, not as `balance + amount`.
+    
+    The fix: Add `simp only []` before omega to unfold let bindings:
+        split_ifs <;> omega  →  split_ifs <;> (simp only []; omega)
+    """
+    
+    result = lean_code
+    replacements = 0
+    
+    # Pattern 1: <;> omega (without parentheses)
+    if '<;> omega' in result and '<;> (simp only []; omega)' not in result:
+        result = re.sub(
+            r'<;>\s*omega\b',
+            '<;> (simp only []; omega)',
+            result
+        )
+        replacements += 1
+    
+    # Pattern 2: <;> try omega
+    if '<;> try omega' in result and '<;> try (simp only []; omega)' not in result:
+        result = re.sub(
+            r'<;>\s*try\s+omega\b',
+            '<;> try (simp only []; omega)',
+            result
+        )
+        replacements += 1
+    
+    # Pattern 3: Standalone omega at end of proof (after ·)
+    # · omega  →  · simp only []; omega
+    result = re.sub(
+        r'(·\s*)omega\b(?!\s*\))',
+        r'\1simp only []; omega',
+        result
+    )
+    
+    # Pattern 4: "exact omega" - less common but handle it
+    # Don't touch "apply Int.ediv_nonneg" etc. - those are fine
+    
+    if replacements > 0 or 'simp only []; omega' in result:
+        print(f"[Tactic Sanitizer] ✅ Added simp before omega to handle let bindings")
+    else:
+        print("[Tactic Sanitizer] No omega patterns found to fix")
+    
+    return result
+
+
 def _deterministic_membership_translation(python_code: str) -> str | None:
     """
     Try to deterministically translate Python code with membership guards.
@@ -744,6 +797,8 @@ def translate_advanced(python_code: str) -> str:
             lean_code = sanitize_lean_imports(lean_code)
             # CRITICAL: Fix variable shadowing - omega can't reason through shadowed vars
             lean_code = sanitize_variable_shadowing(lean_code)
+            # CRITICAL: Fix proof tactics - add simp before omega to unfold let bindings
+            lean_code = sanitize_proof_tactics(lean_code)
             print("[Advanced Translator] LLM translation complete")
             return lean_code
         else:
