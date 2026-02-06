@@ -156,6 +156,40 @@ from . import lean_driver
 from . import python_to_lean
 from . import advanced_translator
 
+# Import Dafny modules (may not be available in all environments)
+try:
+    from . import dafny_driver
+    from . import python_to_dafny
+    DAFNY_AVAILABLE = dafny_driver.check_dafny_available()
+except ImportError:
+    DAFNY_AVAILABLE = False
+    dafny_driver = None
+    python_to_dafny = None
+
+
+def _has_loops(code: str) -> bool:
+    """
+    Detect if Python code contains loops (for/while).
+    
+    Code with loops should be verified with Dafny (better loop invariant support)
+    rather than Lean (which requires induction proofs).
+    """
+    # Strip docstrings and comments
+    code_stripped = re.sub(r'"""[\s\S]*?"""', '', code)
+    code_stripped = re.sub(r"'''[\s\S]*?'''", '', code_stripped)
+    code_stripped = re.sub(r'#.*$', '', code_stripped, flags=re.MULTILINE)
+    
+    loop_patterns = [
+        r'\bfor\s+\w+\s+in\s+',      # for x in ...
+        r'\bwhile\s+',                 # while ...
+    ]
+    
+    for pattern in loop_patterns:
+        if re.search(pattern, code_stripped):
+            return True
+    
+    return False
+
 def _is_complex_code(code: str) -> bool:
     """
     Detect if Python code requires the advanced (LLM-based) translator.
@@ -202,12 +236,11 @@ def _is_complex_code(code: str) -> bool:
 
 def audit_file(filename: str, code: str) -> dict:
     """
-    Audits a single file using hybrid translation:
+    Audits a single file using the appropriate verifier:
     
-    1. Simple code (arithmetic): Uses deterministic AST translator
-    2. Complex code (lists, sets): Uses Gemini-powered advanced translator
-    3. Lean compiler verifies the translation
-    4. If verification finds sorry, try tactic substitution
+    1. Code with loops → Dafny (better loop invariant support)
+    2. Code without loops → Lean (better for arithmetic)
+    3. Complex code (lists, sets, no Dafny) → Gemini-powered Lean translator
     
     The neuro-symbolic approach ensures AI translations are mathematically verified.
     
@@ -216,7 +249,16 @@ def audit_file(filename: str, code: str) -> dict:
     original_code = code
     logs = []
     
-    # Determine which translator to use
+    # Check if code has loops and Dafny is available
+    has_loops = _has_loops(code)
+    
+    if has_loops and DAFNY_AVAILABLE:
+        # Route to Dafny for loop verification
+        print(f"[{filename}] Detected loops - using Dafny verifier...")
+        return audit_file_dafny(filename, code)
+    
+    # Otherwise, use Lean-based verification
+    # Determine which Lean translator to use
     use_advanced = _is_complex_code(code)
     
     if use_advanced:
@@ -297,4 +339,61 @@ def audit_file(filename: str, code: str) -> dict:
         "error_message": result.get("error_message", ""),
         "original_code": original_code,
         "logs": logs
+    }
+
+
+def audit_file_dafny(filename: str, code: str) -> dict:
+    """
+    Audits a file using Dafny verification.
+    
+    Used for code with loops/arrays where Dafny's built-in
+    loop invariant support is superior to Lean.
+    
+    Returns same structure as audit_file() for compatibility.
+    """
+    original_code = code
+    logs = ["Using Dafny verifier (loop-based code detected)"]
+    
+    # Step 1: Translate Python to Dafny
+    print(f"[{filename}] Step 1: Translating Python → Dafny...")
+    dafny_code = python_to_dafny.translate_to_dafny(code)
+    
+    if dafny_code.startswith("// PARSE_ERROR"):
+        print(f"[{filename}] Translation error. Flagging as VULNERABLE.")
+        return {
+            "filename": filename,
+            "status": "VULNERABLE",
+            "verified": False,
+            "proof": dafny_code,
+            "original_code": original_code,
+            "fixed_code": None,
+            "logs": ["Code could not be translated to Dafny."],
+            "verifier": "dafny"
+        }
+    
+    logs.append("Dafny translation completed")
+    
+    # Step 2: Run Dafny verification
+    print(f"[{filename}] Step 2: Running Dafny verification...")
+    result = dafny_driver.run_verification(dafny_code)
+    
+    verified = result["verified"]
+    logs.append(f"Dafny verification: {'PASSED' if verified else 'FAILED'}")
+    
+    if not verified and result.get("error_message"):
+        logs.append(f"Error: {result['error_message'][:200]}")
+    
+    ui_status = "SECURE" if verified else "VULNERABLE"
+    
+    print(f"[{filename}] Final status: {ui_status}")
+    
+    return {
+        "filename": filename,
+        "status": ui_status,
+        "verified": verified,
+        "proof": dafny_code,
+        "error_message": result.get("error_message", ""),
+        "original_code": original_code,
+        "logs": logs,
+        "verifier": "dafny"
     }
