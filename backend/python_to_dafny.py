@@ -532,21 +532,27 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
                     if line.startswith("@requires"):
                         spec = line.replace("@requires", "").strip().strip(":")
                         if spec:
-                            specs["requires"].append(spec)
+                            specs["requires"].append(self._normalize_spec(spec))
                     elif line.startswith("@ensures"):
                         spec = line.replace("@ensures", "").strip().strip(":")
                         if spec:
-                            specs["ensures"].append(spec)
+                            specs["ensures"].append(self._normalize_spec(spec))
                     elif line.startswith("Requires:"):
                         spec = line.replace("Requires:", "").strip()
                         if spec:
-                            specs["requires"].append(spec)
+                            specs["requires"].append(self._normalize_spec(spec))
                     elif line.startswith("Ensures:"):
                         spec = line.replace("Ensures:", "").strip()
                         if spec:
-                            specs["ensures"].append(spec)
+                            specs["ensures"].append(self._normalize_spec(spec))
         
         return specs
+    
+    def _normalize_spec(self, spec: str) -> str:
+        """Normalize a spec string for Dafny compatibility."""
+        # Convert Python boolean literals to Dafny
+        spec = spec.replace("True", "true").replace("False", "false")
+        return spec.strip()
     
     def _capitalize_first(self, name: str) -> str:
         """Capitalize first letter (Dafny convention for methods)."""
