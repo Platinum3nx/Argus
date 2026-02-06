@@ -334,6 +334,7 @@ def clean_response(text: str) -> str:
 def sanitize_lean_imports(lean_code: str) -> str:
     """
     CRITICAL: Strip ALL imports from Gemini output and add ONLY known-working imports.
+    Also strips any prose text that Gemini may add before the actual Lean code.
     
     This is a deterministic fix - Gemini often adds imports like 'Mathlib.Data.Int.Basic'
     that don't exist in our Mathlib cache. By stripping all imports and adding our own,
@@ -346,6 +347,41 @@ def sanitize_lean_imports(lean_code: str) -> str:
     """
     # Split into lines
     lines = lean_code.split('\n')
+    
+    # First, find the first line that looks like valid Lean code
+    # Skip any prose that Gemini may have added before the code
+    valid_lean_start_patterns = [
+        'import ',       # Import statement
+        'def ',          # Function definition  
+        'theorem ',      # Theorem
+        'lemma ',        # Lemma
+        '/--',           # Doc comment
+        '/-!',           # Section comment
+        'namespace ',    # Namespace
+        'open ',         # Open statement
+        'variable ',     # Variable declaration
+        '#check',        # Check command
+        'example ',      # Example
+        'structure ',    # Structure definition
+        'class ',        # Class definition
+        'instance ',     # Instance definition
+        'inductive ',    # Inductive type
+        'abbrev ',       # Abbreviation
+        '--',            # Regular comment (can be start of valid Lean)
+    ]
+    
+    first_lean_line_idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if any(stripped.startswith(p) for p in valid_lean_start_patterns):
+            first_lean_line_idx = i
+            break
+    
+    # Skip prose before the first valid Lean line
+    if first_lean_line_idx > 0:
+        skipped = lines[:first_lean_line_idx]
+        print(f"[Import Sanitizer] Stripping prose before Lean code: {len(skipped)} lines")
+        lines = lines[first_lean_line_idx:]
     
     # Filter out ALL import lines (Gemini may add invalid ones)
     non_import_lines = []
@@ -579,54 +615,64 @@ def sanitize_variable_shadowing(lean_code: str) -> str:
 
 def sanitize_proof_tactics(lean_code: str) -> str:
     """
-    CRITICAL: Fix proof tactics to handle let bindings.
+    CRITICAL: Fix proof tactics to handle various goal types.
     
-    The omega tactic CANNOT simplify through let bindings like:
-        let balance_safe := balance; balance_safe + amount
+    Issues the original `omega` tactic doesn't handle:
+    1. Reflexivity goals like `balance ≥ balance` - needs `rfl` or `le_refl`
+    2. Hypothesis usage like `h : balance ≥ 0 ⊢ balance ≥ 0` - needs `assumption`
+    3. Let bindings like `let x := ...` - needs `simp` before `omega`
     
-    Omega sees this as a separate variable, not as `balance + amount`.
-    
-    The fix: Add `simp only []` before omega to unfold let bindings:
-        split_ifs <;> omega  →  split_ifs <;> (simp only []; omega)
+    The fix: Use a robust tactic chain that tries multiple approaches:
+        split_ifs <;> omega  →  split_ifs <;> (first | rfl | assumption | (simp only []; omega) | omega | decide)
     """
     
     result = lean_code
     replacements = 0
     
+    # The robust tactic that handles all common cases:
+    # - rfl: for reflexivity goals like `x ≥ x`
+    # - assumption: for goals that match a hypothesis exactly
+    # - simp only []; omega: for goals with let bindings
+    # - omega: direct arithmetic solver
+    # - decide: for decidable propositions
+    robust_tactic = "(first | rfl | assumption | (simp only []; omega) | omega | decide)"
+    
     # Pattern 1: <;> omega (without parentheses)
-    # Use 'try simp only []' to avoid "simp made no progress" errors
-    if '<;> omega' in result and '<;> (try simp only []; omega)' not in result:
+    if '<;> omega' in result and robust_tactic not in result:
         result = re.sub(
             r'<;>\s*omega\b',
-            '<;> (try simp only []; omega)',
+            f'<;> {robust_tactic}',
             result
         )
         replacements += 1
     
     # Pattern 2: <;> try omega
-    if '<;> try omega' in result and '<;> try (try simp only []; omega)' not in result:
+    if '<;> try omega' in result:
         result = re.sub(
             r'<;>\s*try\s+omega\b',
-            '<;> try (try simp only []; omega)',
+            f'<;> try {robust_tactic}',
             result
         )
         replacements += 1
     
     # Pattern 3: Standalone omega at end of proof (after ·)
-    # · omega  →  · try simp only []; omega
+    # · omega  →  · first | rfl | assumption | ...
     result = re.sub(
         r'(·\s*)omega\b(?!\s*\))',
-        r'\1try simp only []; omega',
+        rf'\1{robust_tactic}',
         result
     )
     
-    # Pattern 4: "exact omega" - less common but handle it
-    # Don't touch "apply Int.ediv_nonneg" etc. - those are fine
+    # Pattern 4: Handle "(try simp only []; omega)" from previous sanitizer runs
+    # Replace with robust tactic for consistency
+    if '(try simp only []; omega)' in result:
+        result = result.replace('(try simp only []; omega)', robust_tactic)
+        replacements += 1
     
-    if replacements > 0 or 'simp only []; omega' in result:
-        print(f"[Tactic Sanitizer] ✅ Added simp before omega to handle let bindings")
+    if replacements > 0 or robust_tactic in result:
+        print(f"[Tactic Sanitizer] ✅ Applied robust tactic chain to handle all goal types")
     else:
-        print("[Tactic Sanitizer] No omega patterns found to fix")
+        print("[Tactic Sanitizer] No tactic patterns found to fix")
     
     return result
 
