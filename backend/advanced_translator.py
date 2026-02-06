@@ -368,6 +368,215 @@ import Mathlib.Tactic.Linarith
     return result
 
 
+def sanitize_variable_shadowing(lean_code: str) -> str:
+    """
+    CRITICAL: Rename let bindings that shadow function parameters.
+    
+    The omega tactic CANNOT reason through variable shadowing like:
+        let balance := if balance < 0 then 0 else balance
+    
+    Because omega sees two different 'balance' variables with the same name
+    and cannot simplify `let balance := balance`.
+    
+    This function:
+    1. Extracts all function parameter names from def signatures
+    2. Finds let bindings that shadow those names
+    3. Renames shadowed variables: balance -> balance_safe
+    """
+    
+    # Step 1: Extract all parameter names from function definitions
+    # Pattern: def funcname (param1 : Type) (param2 : Type) ...
+    param_pattern = r'def\s+\w+\s+\(([^)]+)\)'
+    all_params = set()
+    
+    for match in re.finditer(param_pattern, lean_code):
+        params_str = match.group(1)
+        # Extract individual parameter names (before the colon)
+        for param in params_str.split(')'):
+            param = param.strip().lstrip('(')
+            if ':' in param:
+                param_name = param.split(':')[0].strip()
+                if param_name:
+                    all_params.add(param_name)
+    
+    if not all_params:
+        return lean_code
+    
+    print(f"[Shadow Sanitizer] Found parameters: {all_params}")
+    
+    # Step 2: For each parameter, find and rename shadowing let bindings
+    result = lean_code
+    renamed_count = 0
+    
+    for param in all_params:
+        # Pattern: let param := ...
+        # We need to rename both the let binding AND all subsequent uses
+        
+        # First, check if this parameter is shadowed anywhere
+        let_pattern = rf'\blet\s+{re.escape(param)}\s*:='
+        
+        if not re.search(let_pattern, result):
+            continue
+        
+        print(f"[Shadow Sanitizer] Renaming shadowed variable: {param} -> {param}_safe")
+        renamed_count += 1
+        
+        # Strategy: Process the code function by function
+        # For simplicity, we'll do a global replacement with care
+        
+        # Step 2a: Rename the let binding itself
+        # let balance := ... -> let balance_safe := ...
+        result = re.sub(
+            rf'\blet\s+{re.escape(param)}\s*:=',
+            f'let {param}_safe :=',
+            result
+        )
+        
+        # Step 2b: Rename uses of the shadowed variable AFTER the let
+        # This is tricky - we need to rename uses but NOT the original parameter
+        # 
+        # The pattern is typically:
+        #   let balance_safe := if balance < 0 then 0 else balance
+        #   balance_safe + amount   <- need to use balance_safe here
+        #
+        # We look for patterns where the variable is used after a let binding
+        # in positions where it should be the safe version
+        
+        # Pattern: After "let X_safe := ...", rename standalone X to X_safe
+        # But we must NOT rename X in the RHS of the let or in other contexts
+        
+        # Simpler approach: Look for common patterns and rename them
+        # Pattern 1: "X + " after a let X_safe := ... 
+        # Pattern 2: "X - " after a let X_safe :=
+        # Pattern 3: standalone "X" at end of if-then-else
+        
+        # Actually, let's use a different strategy:
+        # Since the let binding creates a new scope, we rename uses that appear
+        # AFTER a "let X_safe :=" and BEFORE the next "let" or "def"
+        
+        # For now, let's handle the most common patterns:
+        
+        # In expressions like "balance_safe + amount" or "balance_safe - amount"
+        # If we see "balance + amount" after "let balance_safe", replace it
+        
+        # Pattern: variable name followed by arithmetic operator
+        # Only replace if it's NOT immediately after "let" (which is the binding site)
+        # and NOT in the RHS of the let (which references the parameter)
+        
+        # The safest approach: replace X with X_safe only in specific contexts:
+        # 1. "X +" -> "X_safe +" (arithmetic)
+        # 2. "X -" -> "X_safe -"  (arithmetic, but careful with minus in types)
+        # 3. "then X" -> "then X_safe" (if-then-else return)
+        # 4. "else X" -> "else X_safe"
+        # 5. ":= X\n" or ":= X " at end (final expression)
+        
+        # BUT we must not rename:
+        # - "if X <" (this is the parameter, not the safe version)
+        # - "else X" when it's in the let RHS (references parameter)
+        
+        # The key insight: In the pattern:
+        #   let X_safe := if X < 0 then 0 else X
+        #   X_safe + amount
+        # 
+        # The X in "if X < 0" and "else X" should stay as X (parameter)
+        # The X in "X + amount" should become X_safe
+        
+        # After renaming the let, the code becomes:
+        #   let X_safe := if X < 0 then 0 else X   <- still uses param X correctly
+        #   X + amount  <- THIS needs to become X_safe + amount
+        
+        # How do we know which X to rename? 
+        # Answer: Xs that appear OUTSIDE of a "let X_safe := ..." expression
+        
+        # Simple heuristic: After the line containing "let X_safe :=",
+        # any X that appears at word boundary should be X_safe
+        # UNLESS it's inside another let binding for that same function
+        
+        # Let's process line by line within each function
+        lines = result.split('\n')
+        new_lines = []
+        in_function = False
+        after_let_safe = False
+        current_function_body = []
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if we're starting a new function
+            if line.strip().startswith('def '):
+                # Output any accumulated function body
+                if current_function_body:
+                    new_lines.extend(current_function_body)
+                current_function_body = []
+                in_function = True
+                after_let_safe = False
+                new_lines.append(line)
+            elif line.strip().startswith('theorem ') or line.strip().startswith('-- ') or line.strip().startswith('/-'):
+                # We're leaving function definitions
+                if current_function_body:
+                    new_lines.extend(current_function_body)
+                current_function_body = []
+                in_function = False
+                after_let_safe = False
+                new_lines.append(line)
+            elif in_function:
+                # Check if this line has "let X_safe :="
+                if f'let {param}_safe :=' in line:
+                    after_let_safe = True
+                    new_lines.append(line)
+                elif after_let_safe:
+                    # Rename standalone X to X_safe in this line
+                    # But NOT in "if X" or "then X" or "else X" when it's comparing/using param
+                    
+                    # Strategy: rename X to X_safe when X appears as:
+                    # - Start of expression: "    X +" or "    X -"
+                    # - After operator: "+ X" or "- X"  
+                    # - Note: "if X <" should NOT be renamed (it's the param)
+                    
+                    # Check if this line is part of a let RHS (contains := before X)
+                    if ':=' in line and line.index(':=') < (line.find(param) if param in line else len(line)):
+                        # X appears after :=, might be in let RHS - don't rename
+                        new_lines.append(line)
+                    else:
+                        # Rename X to X_safe for uses that look like expressions
+                        modified_line = line
+                        
+                        # Pattern: word boundary + param + word boundary, followed by operator or end
+                        # But NOT preceded by "if ", "then ", "else " (those use the param)
+                        
+                        # Simple replacements for common patterns:
+                        # "param +" -> "param_safe +"
+                        modified_line = re.sub(rf'\b{re.escape(param)}\s*\+', f'{param}_safe +', modified_line)
+                        # "param -" -> "param_safe -" (but careful with range -)
+                        modified_line = re.sub(rf'\b{re.escape(param)}\s*-(?!=)', f'{param}_safe -', modified_line)
+                        # "+ param" -> "+ param_safe"
+                        modified_line = re.sub(rf'\+\s*{re.escape(param)}\b', f'+ {param}_safe', modified_line)
+                        # "- param" -> "- param_safe"
+                        modified_line = re.sub(rf'-\s*{re.escape(param)}\b(?!_)', f'- {param}_safe', modified_line)
+                        
+                        new_lines.append(modified_line)
+                else:
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+            
+            i += 1
+        
+        # Don't forget remaining function body
+        if current_function_body:
+            new_lines.extend(current_function_body)
+        
+        result = '\n'.join(new_lines)
+    
+    if renamed_count > 0:
+        print(f"[Shadow Sanitizer] ✅ Renamed {renamed_count} shadowed variables")
+    else:
+        print("[Shadow Sanitizer] No shadowed variables found")
+    
+    return result
+
+
 def _deterministic_membership_translation(python_code: str) -> str | None:
     """
     Try to deterministically translate Python code with membership guards.
@@ -533,6 +742,8 @@ def translate_advanced(python_code: str) -> str:
             lean_code = clean_response(response.text)
             # CRITICAL: Sanitize imports - Gemini often adds invalid imports
             lean_code = sanitize_lean_imports(lean_code)
+            # CRITICAL: Fix variable shadowing - omega can't reason through shadowed vars
+            lean_code = sanitize_variable_shadowing(lean_code)
             print("[Advanced Translator] LLM translation complete")
             return lean_code
         else:
