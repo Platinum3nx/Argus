@@ -51,15 +51,41 @@ class PythonToLeanTranslator(ast.NodeVisitor):
             params.append(f"({arg.arg} : {lean_type})")
         
         params_str = " ".join(params)
-
         
         # Get function body
         body = self._translate_body(node.body)
         
-        # Check if return type is tuple
-        return_type = self._infer_return_type(node.body)
+        # Check return type annotation FIRST
+        return_type = self._get_return_type_from_annotation(node)
+        if return_type is None:
+            # Fall back to inference from body
+            return_type = self._infer_return_type(node.body)
         
         return f"def {func_name} {params_str} : {return_type} :=\n{body}"
+    
+    def _get_return_type_from_annotation(self, node: ast.FunctionDef) -> Optional[str]:
+        """Extract return type from Python function annotation."""
+        if node.returns is None:
+            return None
+        
+        annotation = node.returns
+        
+        if isinstance(annotation, ast.Name):
+            type_map = {
+                "int": "Int",
+                "bool": "Bool",
+                "float": "Float",
+                "str": "String",
+            }
+            return type_map.get(annotation.id)
+        
+        if isinstance(annotation, ast.Constant):
+            # Handle string annotations like "bool" or None
+            if annotation.value is None:
+                return "Unit"
+        
+        return None
+
     
     def _infer_param_type(self, arg: ast.arg) -> str:
         """
