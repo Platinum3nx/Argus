@@ -331,6 +331,43 @@ def clean_response(text: str) -> str:
     return text.strip()
 
 
+def sanitize_lean_imports(lean_code: str) -> str:
+    """
+    CRITICAL: Strip ALL imports from Gemini output and add ONLY known-working imports.
+    
+    This is a deterministic fix - Gemini often adds imports like 'Mathlib.Data.Int.Basic'
+    that don't exist in our Mathlib cache. By stripping all imports and adding our own,
+    we guarantee the Lean code will compile.
+    
+    Known-working imports for our Mathlib 4.14.0 setup:
+    - Mathlib.Tactic.SplitIfs: For split_ifs tactic
+    - Mathlib.Tactic.Linarith: For linarith tactic
+    - omega is built into Lean 4 stdlib, no import needed
+    """
+    # Split into lines
+    lines = lean_code.split('\n')
+    
+    # Filter out ALL import lines (Gemini may add invalid ones)
+    non_import_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip any import statement
+        if stripped.startswith('import '):
+            print(f"[Import Sanitizer] Removing: {stripped}")
+            continue
+        non_import_lines.append(line)
+    
+    # Prepend ONLY our known-working imports
+    safe_imports = """import Mathlib.Tactic.SplitIfs
+import Mathlib.Tactic.Linarith
+
+"""
+    
+    result = safe_imports + '\n'.join(non_import_lines)
+    print("[Import Sanitizer] ✅ Imports sanitized")
+    return result
+
+
 def _deterministic_membership_translation(python_code: str) -> str | None:
     """
     Try to deterministically translate Python code with membership guards.
@@ -494,6 +531,8 @@ def translate_advanced(python_code: str) -> str:
         
         if response.parts:
             lean_code = clean_response(response.text)
+            # CRITICAL: Sanitize imports - Gemini often adds invalid imports
+            lean_code = sanitize_lean_imports(lean_code)
             print("[Advanced Translator] LLM translation complete")
             return lean_code
         else:

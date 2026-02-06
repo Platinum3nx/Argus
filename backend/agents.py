@@ -250,6 +250,7 @@ def audit_file(filename: str, code: str) -> dict:
         "status": ui_status,
         "verified": initial_verified,
         "proof": lean_code,
+        "error_message": result.get("error_message", ""),
         "original_code": original_code,
         "logs": logs
     }

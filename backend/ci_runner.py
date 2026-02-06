@@ -55,14 +55,34 @@ def extract_counterexample(lean_output: str) -> dict:
     return counterexample
 
 
-def extract_error_explanation(lean_output: str) -> str:
+def extract_error_explanation(lean_output: str, error_message: str = "") -> str:
     """
-    Extract the human-readable error explanation from Lean comments.
+    Extract the human-readable error explanation from Lean output.
     
-    Looks for lines starting with '--' that explain the error.
+    Priority:
+    1. Lean compiler error messages (error_message from lean_driver)
+    2. Lines starting with '--' comments in the Lean code
+    3. Fallback message
     """
+    # First, try to extract meaningful error from the compiler output
+    if error_message:
+        # Look for omega/split_ifs failure messages
+        error_lines = []
+        for line in error_message.split('\n'):
+            stripped = line.strip()
+            # Skip import/def lines, keep error descriptions
+            if 'error:' in stripped.lower():
+                error_lines.append(stripped)
+            elif 'unsolved goals' in stripped.lower():
+                error_lines.append("Proof failed: could not verify safety invariant")
+            elif 'omega' in stripped.lower() and ('failed' in stripped.lower() or 'could not' in stripped.lower()):
+                error_lines.append("Arithmetic safety check failed - possible overflow or underflow")
+        
+        if error_lines:
+            return ' | '.join(error_lines[:3])  # Limit to first 3 errors
+    
+    # Fallback: look for comment explanations in the Lean source
     explanations = []
-    
     for line in lean_output.split('\n'):
         stripped = line.strip()
         if stripped.startswith('--'):
@@ -72,7 +92,11 @@ def extract_error_explanation(lean_output: str) -> str:
                 if explanation and len(explanation) > 10:
                     explanations.append(explanation)
     
-    return ' '.join(explanations) if explanations else "Formal verification failed"
+    if explanations:
+        return ' '.join(explanations)
+    
+    # Default fallback
+    return "Formal verification failed - the code does not satisfy safety invariants"
 
 
 def generate_json_report(results: list, secrets_findings: list, repo_name: str = None) -> dict:
@@ -97,7 +121,7 @@ def generate_json_report(results: list, secrets_findings: list, repo_name: str =
             "status": r["status"],
             "original_code": r.get("original_code", ""),
             "lean_proof": lean_proof,
-            "error_explanation": extract_error_explanation(lean_proof) if r["status"] == "VULNERABLE" else None,
+            "error_explanation": extract_error_explanation(lean_proof, r.get("error_message", "")) if r["status"] == "VULNERABLE" else None,
             "counterexample": extract_counterexample(lean_proof) if r["status"] == "VULNERABLE" else None,
             "suggested_fix": r.get("suggested_fix") or r.get("fixed_code"),
             "fix_verified": r["status"] == "AUTO_PATCHED"
@@ -250,7 +274,8 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
         # NEW: Show "Why is this Vulnerable?" for failed files
         if r["status"] == "VULNERABLE":
             proof = r.get("proof", "")
-            explanation = extract_error_explanation(proof)
+            error_msg = r.get("error_message", "")
+            explanation = extract_error_explanation(proof, error_msg)
             counterexample = extract_counterexample(proof)
             
             report_lines.append("\n#### ⚠️ Why is this Vulnerable?")

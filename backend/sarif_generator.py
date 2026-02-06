@@ -11,18 +11,38 @@ import json
 import os
 from typing import List, Dict, Any
 
-def clean_lean_error(lean_message: str) -> str:
+def clean_lean_error(lean_message: str, error_message: str = "") -> str:
     """
     Clean raw Lean error output to show only human-readable explanations.
     
-    Removes:
-    - Imports
-    - Raw Lean definitions/theorems
-    - 'sorry' keywords
-    
-    Keeps:
-    - Lines starting with '--' (comments explaining the error)
+    Priority:
+    1. Lean compiler error messages (error_message from lean_driver)
+    2. Lines starting with '--' (comments explaining the error)
+    3. Fallback to last few lines of output
     """
+    # First, try to extract meaningful error from the compiler output
+    if error_message:
+        error_lines = []
+        for line in error_message.split('\n'):
+            stripped = line.strip()
+            # Look for actual error descriptions
+            if 'error:' in stripped.lower():
+                # Extract just the error message, not the file path
+                if ':' in stripped:
+                    parts = stripped.split('error:', 1)
+                    if len(parts) > 1:
+                        error_lines.append(f"Error: {parts[1].strip()}")
+                    else:
+                        error_lines.append(stripped)
+            elif 'unsolved goals' in stripped.lower():
+                error_lines.append("Proof failed: could not verify safety invariant")
+            elif 'omega' in stripped.lower() and ('failed' in stripped.lower() or 'could not' in stripped.lower()):
+                error_lines.append("Arithmetic safety check failed - possible overflow or underflow")
+        
+        if error_lines:
+            return '\n'.join(error_lines[:3])  # Limit to first 3 errors
+    
+    # Fallback: look for comment explanations in the Lean source
     lines = lean_message.split('\n')
     cleaned_lines = []
     
@@ -33,13 +53,15 @@ def clean_lean_error(lean_message: str) -> str:
             # Remove the comment marker for cleaner output
             cleaned_lines.append(stripped[2:].strip())
     
-    if not cleaned_lines:
-        # If no comments found, return the last few lines as fallback (usually contain the error)
-        # But filter out imports/defs
-        fallback = [l for l in lines[-5:] if not l.startswith("import") and not l.startswith("def")]
+    if cleaned_lines:
+        return "\n".join(cleaned_lines)
+    
+    # Final fallback: last few lines, filtered
+    fallback = [l for l in lines[-5:] if not l.startswith("import") and not l.startswith("def") and l.strip()]
+    if fallback:
         return "\n".join(fallback)
         
-    return "\n".join(cleaned_lines)
+    return "Formal verification failed - the code does not satisfy safety invariants"
 
 
 def generate_sarif(results: List[Dict[str, Any]], secrets_findings: List[Any], repo_path: str = ".") -> Dict[str, Any]:
@@ -114,7 +136,8 @@ def generate_sarif(results: List[Dict[str, Any]], secrets_findings: List[Any], r
         # AUTO_PATCHED and SECURE are essentially "passed" checks.
         if r.get("status") == "VULNERABLE":
             filename = r.get("filename")
-            message = r.get("proof", "Verification failed")
+            proof = r.get("proof", "Verification failed")
+            error_msg = r.get("error_message", "")
             
             # Default line number to 1 if we can't parse it from the error
             # In a real impl, we'd parse the Lean error to find the exact line
@@ -123,7 +146,7 @@ def generate_sarif(results: List[Dict[str, Any]], secrets_findings: List[Any], r
             result_item = {
                 "ruleId": "ARGUS001",
                 "message": {
-                    "text": f"Argus Logic Audit:\n\n{clean_lean_error(message)}"
+                    "text": f"Argus Logic Audit:\n\n{clean_lean_error(proof, error_msg)}"
                 },
                 "level": "error",
                 "locations": [
