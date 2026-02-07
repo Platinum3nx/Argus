@@ -174,7 +174,7 @@ def attempt_repair(filename: str, original_code: str, lean_error: str, repo_path
     Returns:
         Dictionary with repair results
     """
-    MAX_REPAIR_ATTEMPTS = 3
+    MAX_REPAIR_ATTEMPTS = 5
     
     print(f"[{filename}] Attempting AI-powered repair (max {MAX_REPAIR_ATTEMPTS} attempts)...")
     
