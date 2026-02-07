@@ -85,6 +85,21 @@ The code below failed a Lean 4 formal verification proof. The proof was trying t
 - Type validation: `if isinstance(value, expected_type):`
 - Bounds validation: `if lower <= value <= upper:`
 
+### Loop & Array Safety (CRITICAL)
+- **DO NOT use early returns** to check array lengths for loops (e.g., `if len(a) != len(b): return`). The verifier may not see this as an invariant for the loop.
+- **INSTEAD, use limits:**
+  ```python
+  limit = min(len(a), len(b))
+  for i in range(limit):
+      # Safe access
+  ```
+- **OR use explicit bounds guards:**
+  ```python
+  for i in range(len(a)):
+      if i < len(b):
+          # Safe access
+  ```
+
 Generate the fixed Python code now:"""
 
 
