@@ -94,6 +94,19 @@ def get_changed_files(repo_path: str) -> List[str]:
             # Check if before_sha is valid (not all zeros, which means first push)
             if before_sha and before_sha != "0000000000000000000000000000000000000000":
                 print(f"Using GitHub event: {before_sha[:7]}..{after_sha[:7]}")
+                
+                # Fetch the 'before' commit (shallow clones don't have it)
+                print(f"Fetching parent commit {before_sha[:7]} for comparison...")
+                fetch_result = subprocess.run(
+                    ["git", "fetch", "origin", before_sha, "--depth=1"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+                if fetch_result.returncode != 0:
+                    print(f"Warning: Could not fetch parent commit: {fetch_result.stderr.strip()}")
+                
+                # Now run the diff
                 result = subprocess.run(
                     ["git", "diff", "--name-only", before_sha, after_sha],
                     cwd=repo_path,
@@ -107,6 +120,7 @@ def get_changed_files(repo_path: str) -> List[str]:
                 return valid_files
         except Exception as e:
             print(f"GitHub event parsing failed: {e}")
+
     
     # Strategy 2: GitHub PR event (compare with base branch)
     base_ref = os.environ.get("GITHUB_BASE_REF")
