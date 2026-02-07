@@ -159,7 +159,11 @@ def generate_json_report(results: list, secrets_findings: list, repo_name: str =
 
 def attempt_repair(filename: str, original_code: str, lean_error: str, repo_path: str) -> dict:
     """
-    Attempt to repair vulnerable code using Gemini.
+    Attempt to repair vulnerable code using Gemini with retries.
+    
+    The LLM may generate fixes that don't verify on the first attempt,
+    but retrying increases success rate since different attempts may
+    use different fix strategies.
     
     Args:
         filename: Original filename
@@ -170,65 +174,66 @@ def attempt_repair(filename: str, original_code: str, lean_error: str, repo_path
     Returns:
         Dictionary with repair results
     """
-    print(f"[{filename}] Attempting AI-powered repair...")
+    MAX_REPAIR_ATTEMPTS = 3
     
-    try:
-        # Generate fix using Gemini
-        fixed_code = generate_fix(original_code, lean_error)
+    print(f"[{filename}] Attempting AI-powered repair (max {MAX_REPAIR_ATTEMPTS} attempts)...")
+    
+    for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
+        print(f"[{filename}] Repair attempt {attempt}/{MAX_REPAIR_ATTEMPTS}...")
         
-        if not fixed_code or len(fixed_code.strip()) < 10:
-            print(f"[{filename}] AI returned empty or invalid fix")
-            return {
-                "attempted": True,
-                "success": False,
-                "reason": "AI returned empty or invalid code",
-                "fixed_code": None,
-                "fixed_filename": None
-            }
-        
-        # Save the fixed code to a new file
-        base_name = os.path.splitext(filename)[0]
-        fixed_filename = f"{base_name}_fixed.py"
-        fixed_path = os.path.join(repo_path, fixed_filename)
-        
-        with open(fixed_path, "w") as f:
-            f.write(fixed_code)
-        print(f"[{filename}] Fixed code saved to {fixed_filename}")
-        
-        # Verify the fix
-        print(f"[{filename}] Verifying the AI-generated fix...")
-        fix_result = agents.audit_file(fixed_filename, fixed_code)
-        
-        if fix_result["verified"]:
-            print(f"[{filename}] ✅ AI fix PASSED verification!")
-            return {
-                "attempted": True,
-                "success": True,
-                "reason": "AI-generated fix passed formal verification",
-                "fixed_code": fixed_code,
-                "fixed_filename": fixed_filename,
-                "fixed_proof": fix_result.get("proof")
-            }
-        else:
-            print(f"[{filename}] ❌ AI fix FAILED verification")
-            return {
-                "attempted": True,
-                "success": False,
-                "reason": "AI-generated fix failed formal verification",
-                "fixed_code": fixed_code,
-                "fixed_filename": fixed_filename,
-                "fixed_proof": fix_result.get("proof")
-            }
+        try:
+            # Generate fix using Gemini
+            fixed_code = generate_fix(original_code, lean_error)
             
-    except Exception as e:
-        print(f"[{filename}] Repair error: {e}")
-        return {
-            "attempted": True,
-            "success": False,
-            "reason": f"Repair error: {str(e)}",
-            "fixed_code": None,
-            "fixed_filename": None
-        }
+            if not fixed_code or len(fixed_code.strip()) < 10:
+                print(f"[{filename}] Attempt {attempt}: AI returned empty or invalid fix")
+                continue  # Try again
+            
+            # Save the fixed code to a new file
+            base_name = os.path.splitext(filename)[0]
+            fixed_filename = f"{base_name}_fixed.py"
+            fixed_path = os.path.join(repo_path, fixed_filename)
+            
+            with open(fixed_path, "w") as f:
+                f.write(fixed_code)
+            print(f"[{filename}] Attempt {attempt}: Fixed code saved to {fixed_filename}")
+            
+            # Verify the fix
+            print(f"[{filename}] Attempt {attempt}: Verifying the AI-generated fix...")
+            fix_result = agents.audit_file(fixed_filename, fixed_code)
+            
+            if fix_result["verified"]:
+                print(f"[{filename}] ✅ AI fix PASSED verification on attempt {attempt}!")
+                return {
+                    "attempted": True,
+                    "success": True,
+                    "attempts": attempt,
+                    "reason": f"AI-generated fix passed formal verification (attempt {attempt})",
+                    "fixed_code": fixed_code,
+                    "fixed_filename": fixed_filename,
+                    "fixed_proof": fix_result.get("proof")
+                }
+            else:
+                print(f"[{filename}] Attempt {attempt}: Fix failed verification, trying again...")
+                # Store the last failed fix in case all attempts fail
+                last_failed_fix = fixed_code
+                last_failed_proof = fix_result.get("proof")
+                
+        except Exception as e:
+            print(f"[{filename}] Attempt {attempt} error: {e}")
+            continue  # Try again
+    
+    # All attempts failed
+    print(f"[{filename}] ❌ AI fix FAILED verification after {MAX_REPAIR_ATTEMPTS} attempts")
+    return {
+        "attempted": True,
+        "success": False,
+        "attempts": MAX_REPAIR_ATTEMPTS,
+        "reason": f"AI-generated fix failed formal verification after {MAX_REPAIR_ATTEMPTS} attempts",
+        "fixed_code": last_failed_fix if 'last_failed_fix' in dir() else None,
+        "fixed_filename": fixed_filename if 'fixed_filename' in dir() else None,
+        "fixed_proof": last_failed_proof if 'last_failed_proof' in dir() else None
+    }
 
 
 def generate_report(results: list, secrets_findings: list = None) -> int:
