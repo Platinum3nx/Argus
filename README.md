@@ -7,6 +7,7 @@
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Ready-success)](https://github.com/Platinum3nx/Argus)
 [![Gemini 3](https://img.shields.io/badge/Gemini-3.0%20Pro-blue)](https://ai.google.dev/)
 [![Lean 4](https://img.shields.io/badge/Lean-4.26.0-purple)](https://leanprover.github.io/)
+[![Dafny](https://img.shields.io/badge/Dafny-4.4.0-orange)](https://dafny.org/)
 
 Argus is a **zero-config GitHub Action** that combines the creativity of **Gemini** with the rigor of **Lean 4 formal proofs** to automatically find AND fix security vulnerabilities in Python code.
 
@@ -51,7 +52,7 @@ flowchart TD
     Report --> SARIF[GitHub Security Tab]
 ```
 
-**The key insight: AI proposes, Math verifies.** Gemini generates fixes, but Lean 4 proves they're correct.
+**The key insight: AI proposes, Math verifies.** Gemini generates fixes, while **Lean 4** (for logic) and **Dafny** (for loops) prove they're correct.
 
 ---
 
@@ -209,6 +210,7 @@ The `/explain` API endpoint translates cryptic proofs into developer-friendly ex
 |-----------|------|---------|
 | **CI Runner** | `ci_runner.py` | Orchestrates audit + repair loop |
 | **Lean Driver** | `lean_driver.py` | Runs Lean compiler, detects failures |
+| **Dafny Driver** | `dafny_driver.py` | Verifies loop invariants & arrays |
 | **AI Repair** | `ai_repair.py` | Gemini-powered code fixes |
 | **Secrets Scanner** | `secrets_scanner.py` | Detects 15+ credential types |
 | **SARIF Generator** | `sarif_generator.py` | GitHub Code Scanning output |
@@ -254,6 +256,8 @@ Test with files in `demo_files/`:
 | `wallet_buggy.py` | Missing balance check | AUTO_PATCHED |
 | `wallet_secure.py` | None | SECURE |
 | `credit_system.py` | Missing limit check | VULNERABLE/AUTO_PATCHED |
+| `portfolioAggregate.py` | None (Loop Logic) | SECURE (Dafny) |
+| `savingsAccount.py` | Variable Shadowing | AUTO_PATCHED |
 | `config_with_secrets.py` | Hardcoded API keys | SECRET_DETECTED |
 
 ---
@@ -262,6 +266,7 @@ Test with files in `demo_files/`:
 
 - **Python 3.11** — Backend and AST parsing
 - **Lean 4.26.0** + **Mathlib** — Formal verification
+- **Dafny 4.4.0** — Loop invariant verification
 - **Gemini 3 Pro** — AI translation and repair
 - **Next.js 14** — Frontend dashboard
 - **Docker** — Containerized GitHub Action
