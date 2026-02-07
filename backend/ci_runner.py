@@ -104,17 +104,19 @@ def extract_error_explanation(lean_output: str, error_message: str = "", ai_expl
     return "Formal verification failed - safety conditions not met."
 
 
-def generate_json_report(results: list, secrets_findings: list, repo_name: str = None) -> dict:
+def generate_json_report(results: list, secrets_findings: list, repo_name: str = None, unaudited_files: list = None) -> dict:
     """
     Generate a rich JSON report for the frontend dashboard.
     
     This is MORE detailed than SARIF and designed for our custom UI.
     """
     summary = {
+        "audited": len(results),
         "secure": sum(1 for r in results if r["status"] == "SECURE"),
         "vulnerable": sum(1 for r in results if r["status"] == "VULNERABLE"),
         "patched": sum(1 for r in results if r["status"] == "AUTO_PATCHED"),
-        "secrets": len(secrets_findings) if secrets_findings else 0
+        "secrets": len(secrets_findings) if secrets_findings else 0,
+        "unaudited": len(unaudited_files) if unaudited_files else 0
     }
     
     files = []
@@ -143,6 +145,15 @@ def generate_json_report(results: list, secrets_findings: list, repo_name: str =
                 "line_number": secret.line_number,
                 "severity": secret.severity,
                 "description": secret.description
+            })
+    
+    # Add unaudited files
+    if unaudited_files:
+        for filename in unaudited_files:
+            files.append({
+                "filename": filename,
+                "status": "UNAUDITED",
+                "reason": "File unchanged in this commit"
             })
     
     report = {
@@ -236,7 +247,7 @@ def attempt_repair(filename: str, original_code: str, lean_error: str, repo_path
     }
 
 
-def generate_report(results: list, secrets_findings: list = None) -> int:
+def generate_report(results: list, secrets_findings: list = None, unaudited_files: list = None) -> int:
     """
     Generates a Markdown report and writes it to Argus_Audit_Report.md
     and GITHUB_STEP_SUMMARY if available.
@@ -244,15 +255,17 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
     """
     report_lines = ["# Argus AI Audit Report", "", "## Summary"]
     
-    total = len(results)
+    audited_count = len(results)
     secure = sum(1 for r in results if r["status"] == "SECURE")
     patched = sum(1 for r in results if r["status"] == "AUTO_PATCHED")
     vulnerable = sum(1 for r in results if r["status"] == "VULNERABLE")
+    unaudited_count = len(unaudited_files) if unaudited_files else 0
     
-    report_lines.append(f"- **Total Files Audited:** {total}")
+    report_lines.append(f"- **Files Audited:** {audited_count} (changed in this commit)")
     report_lines.append(f"- **✅ Secure:** {secure}")
     report_lines.append(f"- **🔧 Auto-Patched:** {patched}")
     report_lines.append(f"- **❌ Vulnerable:** {vulnerable}")
+    report_lines.append(f"- **⏭️ Unaudited (unchanged):** {unaudited_count}")
     report_lines.append("")
     
     # Only fail if there are truly unfixed vulnerabilities or HIGH severity secrets
@@ -337,6 +350,19 @@ def generate_report(results: list, secrets_findings: list = None) -> int:
              
         report_lines.append("---")
 
+    # Add unaudited files section
+    if unaudited_files:
+        report_lines.append("")
+        report_lines.append("## ⏭️ Unaudited Files (Unchanged)")
+        report_lines.append("> These files were not modified in this commit and were skipped.")
+        report_lines.append("> Argus only audits files that change.")
+        report_lines.append("")
+        report_lines.append(f"<details><summary>{len(unaudited_files)} files not audited</summary>\n")
+        for filename in sorted(unaudited_files):
+            report_lines.append(f"- `{filename}`")
+        report_lines.append("\n</details>")
+        report_lines.append("")
+
 
     report_content = "\n".join(report_lines)
     
@@ -416,18 +442,25 @@ def main():
     repo_path = os.environ.get("REPO_PATH", ".")
     print(f"Scanning repository at: {repo_path}")
     
+    # Get all Python files for tracking unaudited files
+    all_files = repo_manager.get_all_python_files(repo_path)
+    
     # 1. Get changed files (Smart Scan)
     try:
         critical_files = repo_manager.get_changed_files(repo_path)
     except Exception as e:
         print(f"Error getting changed files: {e}")
         critical_files = []
+    
+    # Calculate unaudited files (unchanged files that were skipped)
+    unaudited_files = [f for f in all_files if f not in critical_files]
         
     if not critical_files:
         print("No Python files changed. Skipping audit.")
         sys.exit(0)
         
     print(f"Auditing {len(critical_files)} files: {critical_files}")
+    print(f"Skipping {len(unaudited_files)} unchanged files")
     
     # 1b. Run secrets scan on entire repo
     print(f"\n{'='*50}")
@@ -527,7 +560,7 @@ def main():
     print("Generating report...")
     print(f"{'='*50}")
     
-    exit_code = generate_report(results, secrets_findings)
+    exit_code = generate_report(results, secrets_findings, unaudited_files)
     
     # 3b. Generate SARIF output
     print("Generating SARIF output...")
@@ -543,7 +576,7 @@ def main():
     # 3c. Generate rich JSON report for dashboard
     print("Generating JSON report for dashboard...")
     try:
-        json_report = generate_json_report(results, secrets_findings)
+        json_report = generate_json_report(results, secrets_findings, unaudited_files=unaudited_files)
         json_file = os.path.join(repo_path, "argus_report.json")
         with open(json_file, "w") as f:
             json.dump(json_report, f, indent=2)
