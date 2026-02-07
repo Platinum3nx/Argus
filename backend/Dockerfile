@@ -66,7 +66,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 13. Cache-bust for backend code
-ARG BUILD_VERSION=2026-02-06-v28-5-retries
+ARG BUILD_VERSION=2026-02-06-v29-pr-fix
 RUN echo "Build version: ${BUILD_VERSION}"
 
 # 14. Copy backend code

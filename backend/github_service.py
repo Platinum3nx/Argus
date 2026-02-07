@@ -92,8 +92,19 @@ class GitHubService:
         except GithubException as e:
             raise RuntimeError(f"Could not find branch '{original_branch}': {e}")
         
-        # Create the new branch
+        # Create the new branch (delete first if it already exists)
         try:
+            # Check if branch already exists and delete it
+            try:
+                existing_ref = repo.get_git_ref(f"heads/{fix_branch}")
+                print(f"[GitHub Service] Branch {fix_branch} already exists, deleting...")
+                existing_ref.delete()
+                print(f"[GitHub Service] Deleted existing branch {fix_branch}")
+            except GithubException:
+                # Branch doesn't exist, which is fine
+                pass
+            
+            # Now create the fresh branch
             repo.create_git_ref(
                 ref=f"refs/heads/{fix_branch}",
                 sha=base_sha
