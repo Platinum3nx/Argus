@@ -259,6 +259,14 @@ Test with files in `demo_files/`:
 | `portfolioAggregate.py` | None (Loop Logic) | SECURE (Dafny) |
 | `savingsAccount.py` | Variable Shadowing | AUTO_PATCHED |
 | `config_with_secrets.py` | Hardcoded API keys | SECRET_DETECTED |
+| `audit_logger.py` | Event Validation | SECURE |
+| `currency_ops.py` | Arithmetic Safety | SECURE |
+| `inventory_manager.py` | Data Integrity | SECURE |
+| `investmentPortfolio(v).py` | Loop Aggregation | SECURE (Dafny) |
+| `orderProcessor.py` | Business Logic | SECURE |
+| `riskValidator.py` | Array Validation | SECURE (Dafny) |
+| `tax_utils.py` | Deduction Logic | SECURE |
+| `transactionProcessor.py` | Loop Verification | SECURE (Dafny) |
 
 ---
 

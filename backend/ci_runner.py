@@ -294,7 +294,21 @@ def generate_report(results: list, secrets_findings: list = None, unaudited_file
         report_lines.append(f"### {icon} {r['filename']}")
         report_lines.append(f"**Status:** {r['status']}")
         
-        # NEW: Show "Why is this Vulnerable?" for failed files
+        # Show original issue for AUTO_PATCHED files (what was wrong before the fix)
+        if r["status"] == "AUTO_PATCHED" and r.get("original_issue"):
+            original = r["original_issue"]
+            report_lines.append("\n#### 🔍 Original Issue (Fixed)")
+            report_lines.append(f"> {original.get('error_summary', 'Verification failed')}")
+            
+            if original.get("counterexample"):
+                report_lines.append("\n**Counterexample (before fix):**")
+                report_lines.append("| Variable | Value |")
+                report_lines.append("|----------|-------|")
+                for var, val in original["counterexample"].items():
+                    report_lines.append(f"| `{var}` | {val} |")
+                report_lines.append("")
+        
+        # Show "Why is this Vulnerable?" for files that remain unfixed
         if r["status"] == "VULNERABLE":
             proof = r.get("proof", "")
             error_msg = r.get("error_message", "")
@@ -514,6 +528,14 @@ def main():
                     result["ai_explanation"] = ai_explanation
                 except Exception as e:
                     print(f"[{filename}] Failed to generate explanation: {e}")
+                    ai_explanation = ""
+                
+                # Capture original issue info BEFORE repair (for display even if fix succeeds)
+                result["original_issue"] = {
+                    "error_summary": extract_error_explanation(result.get("proof", ""), lean_error, ai_explanation),
+                    "counterexample": extract_counterexample(result.get("proof", "")),
+                    "original_proof": result.get("proof", "")
+                }
                 
                 # Attempt AI-powered repair
                 repair_result = attempt_repair(
