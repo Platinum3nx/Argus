@@ -30,6 +30,7 @@ Argus is a **zero-config GitHub Action** that combines the creativity of **Gemin
 
 ## 🔄 How It Works
 
+```mermaid
 flowchart TD
     Start([Python Code]) --> Scan{Secrets Scan}
     Scan -- Found Secrets --> Report([Report Issue])
@@ -62,6 +63,7 @@ flowchart TD
     Vuln --> Report
     Secure --> Report
     Report --> SARIF[GitHub Security Tab]
+```
 
 **The key insight: Hybrid Architecture.** Argus smartly routes code based on complexity:
 
