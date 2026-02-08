@@ -127,7 +127,9 @@ class PythonToDafnyTranslator(ast.NodeVisitor):
         if isinstance(stmt, ast.Return):
             if stmt.value:
                 expr = self._translate_expr(stmt.value)
-                return f"{prefix}result := {expr};"
+                # CRITICAL: Add return; after result assignment to stop execution
+                # Without this, subsequent statements would overwrite result
+                return f"{prefix}result := {expr};\n{prefix}return;"
             return f"{prefix}return;"
         
         # Assignment
