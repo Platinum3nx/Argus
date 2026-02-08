@@ -316,24 +316,20 @@ def calculate_transaction_fee(amount: int, fee_bps: int, min_fee: int, max_fee: 
     return calculated_fee
 
 
-def process_transfer(source_balance: int, dest_balance: int, amount: int, fee: int) -> Tuple[int, int]:
+def process_transfer_source(source_balance: int, amount: int, fee: int) -> int:
     """
-    Process a transfer between two accounts.
+    Calculate new source balance after a transfer.
     
     @requires: source_balance >= 0
-    @requires: dest_balance >= 0
     @requires: amount >= 0
     @requires: fee >= 0
-    @ensures: result[0] >= 0
-    @ensures: result[1] >= 0
+    @ensures: result >= 0
     
-    Returns (new_source_balance, new_dest_balance).
-    Transfer only succeeds if source has sufficient funds for amount + fee.
+    Returns new source balance after deducting amount + fee.
+    Returns original balance if insufficient funds.
     """
     if source_balance < 0:
-        source_balance = 0
-    if dest_balance < 0:
-        dest_balance = 0
+        return 0
     if amount < 0:
         amount = 0
     if fee < 0:
@@ -342,12 +338,32 @@ def process_transfer(source_balance: int, dest_balance: int, amount: int, fee: i
     total_debit = amount + fee
     
     if source_balance >= total_debit:
-        new_source = source_balance - total_debit
-        new_dest = dest_balance + amount
-        return (new_source, new_dest)
+        return source_balance - total_debit
     
     # Insufficient funds, no transfer
-    return (source_balance, dest_balance)
+    return source_balance
+
+
+def process_transfer_dest(dest_balance: int, amount: int, transfer_approved: int) -> int:
+    """
+    Calculate new destination balance after a transfer.
+    
+    @requires: dest_balance >= 0
+    @requires: amount >= 0
+    @requires: transfer_approved >= 0
+    @ensures: result >= 0
+    
+    Returns new dest balance after adding amount (if transfer approved).
+    """
+    if dest_balance < 0:
+        return 0
+    if amount < 0:
+        return dest_balance
+    
+    if transfer_approved == 1:
+        return dest_balance + amount
+    
+    return dest_balance
 
 
 def batch_sum_transactions(amounts: List[int]) -> int:
@@ -640,10 +656,10 @@ def calculate_minimum_payment(balance: int, min_payment_pct_bps: int, min_paymen
     
     pct_payment = (balance * min_payment_pct_bps) // 10000
     
-    if pct_payment < min_payment_floor:
+    # Use the greater of pct_payment or floor
+    min_payment = pct_payment
+    if min_payment < min_payment_floor:
         min_payment = min_payment_floor
-    else:
-        min_payment = pct_payment
     
     # Can't pay more than balance
     if min_payment > balance:
