@@ -30,29 +30,44 @@ Argus is a **zero-config GitHub Action** that combines the creativity of **Gemin
 
 ## 🔄 How It Works
 
-```mermaid
 flowchart TD
     Start([Python Code]) --> Scan{Secrets Scan}
     Scan -- Found Secrets --> Report([Report Issue])
-    Scan -- Safe --> Trans[AI Translator<br/>Gemini 3 Pro]
+    Scan -- Safe --> Router{Code Analysis}
     
-    Trans --> Lean[Lean 4 Verifier]
+    %% Dual Translation Paths
+    Router -- Loop Heavy --> DafnyTrans[AST Translator]
+    Router -- Simple Logic --> LeanTrans[AST Translator]
+    Router -- Complex Logic --> Gemini[Gemini 3 Pro<br/>Advanced Translator]
     
-    Lean -- Proof Succeeds --> Secure([✅ Secure])
-    Lean -- Proof Fails --> Repair{Auto-Repair?}
+    %% Verification Engines
+    DafnyTrans --> Dafny[Dafny Verifier]
+    LeanTrans --> Lean[Lean 4 Verifier]
+    Gemini --> Lean
     
-    Repair -- Yes --> Fix[AI Fixer Agent]
-    Fix --> Lean
+    %% Verification Results
+    Dafny -- Verified --> Secure([✅ Secure])
+    Lean -- Verified --> Secure
+    
+    Dafny -- Failed --> Repair{Auto-Repair?}
+    Lean -- Failed --> Repair
+    
+    %% Repair Loop
+    Repair -- Yes --> Fix[AI Fixer Agent<br/>Gemini 3 Pro]
+    Fix --> Router
     
     Repair -- No --> Vuln([❌ Vulnerable])
     
+    %% Reporting
     Vuln --> Report
     Secure --> Report
-    
     Report --> SARIF[GitHub Security Tab]
-```
 
-**The key insight: AI proposes, Math verifies.** Gemini generates fixes, while **Lean 4** (for logic) and **Dafny** (for loops) prove they're correct.
+**The key insight: Hybrid Architecture.** Argus smartly routes code based on complexity:
+
+*   **Simple Logic & Loops** → Deterministic AST Translation (Fast & Precise)
+*   **Complex Logic** → **Gemini 3 Pro** (Creative & Powerful)
+*   **Verification** → **Lean 4** (Logic) or **Dafny** (Loops) prove correctness.
 
 ---
 
