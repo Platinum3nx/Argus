@@ -36,25 +36,31 @@ flowchart TD
     Scan -- Found Secrets --> Report([Report Issue])
     Scan -- Safe --> Router{Code Analysis}
     
-    %% Dual Translation Paths
-    Router -- Loop Heavy --> DafnyTrans[AST Translator]
-    Router -- Simple Logic --> LeanTrans[AST Translator]
-    Router -- Complex Logic --> Gemini[Gemini 3 Pro<br/>Advanced Translator]
+    subgraph DafnyPath [Loop Heavy Code]
+        DafnyTrans[AST Translator] --> Dafny[Dafny Verifier]
+    end
     
-    %% Verification Engines
-    DafnyTrans --> Dafny[Dafny Verifier]
-    LeanTrans --> Lean[Lean 4 Verifier]
-    Gemini --> Lean
+    subgraph LeanPath [Logic Heavy Code]
+        LeanTrans[AST Translator]
+        Gemini[Gemini 3 Pro<br/>Advanced Translator]
+        Lean[Lean 4 Verifier]
+        
+        LeanTrans --> Lean
+        Gemini --> Lean
+    end
     
-    %% Verification Results
+    Router -- Loops --> DafnyTrans
+    Router -- Simple --> LeanTrans
+    Router -- Complex --> Gemini
+    
+    %% Results
     Dafny -- Verified --> Secure([✅ Secure])
     Lean -- Verified --> Secure
     
-    %% Failure Paths (Layout Fix)
+    %% Repair Logic
     Dafny -- Failed --> Repair{Auto-Repair?}
     Lean -- Failed --> Repair
     
-    %% Repair Loop
     Repair -- Yes --> Fix[AI Fixer Agent<br/>Gemini 3 Pro]
     Fix --> Router
     
