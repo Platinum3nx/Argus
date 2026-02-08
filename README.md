@@ -50,6 +50,7 @@ flowchart TD
     Dafny -- Verified --> Secure([✅ Secure])
     Lean -- Verified --> Secure
     
+    %% Failure Paths (Layout Fix)
     Dafny -- Failed --> Repair{Auto-Repair?}
     Lean -- Failed --> Repair
     
